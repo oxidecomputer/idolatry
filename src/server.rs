@@ -293,7 +293,7 @@ pub fn generate_server_in_order_trait(
     writeln!(out, "        }}")?;
     writeln!(out, "    }};")?;
 
-    writeln!(out, "    if rm.sender == TaskId::KERNEL {{")?;
+    writeln!(out, "    if rm.sender == userlib::TaskId::KERNEL {{")?;
     writeln!(out, "        server.handle_notification(rm.operation);")?;
     writeln!(out, "    }} else {{")?;
 
