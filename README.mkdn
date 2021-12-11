@@ -1,0 +1,6 @@
+# Idol: interface definitions for Hubris
+
+This is an experimental interface definition language for defining IPC
+interfaces between tasks in a [Hubris] application.
+
+[Hubris]: https://hubris.oxide.computer/
