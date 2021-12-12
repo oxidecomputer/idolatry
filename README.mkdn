@@ -3,4 +3,206 @@
 This is an experimental interface definition language for defining IPC
 interfaces between tasks in a [Hubris] application.
 
+## IDL format
+
+Currently, the IDL "format" is merely the `idol::syntax::Interface` struct as
+loaded via [serde] from a [RON] file. The best docs for the format are the
+rustdocs on that struct and its children.
+
+Here is a simple example.
+
+```
+Interface(
+    name: "Spi",
+    ops: {
+        "exchange": (
+            args: {
+                "device_index": (type: "u8"),
+            },
+            leases: {
+                "source": (type: "[u8]", read: true),
+                "sink": (type: "[u8]", write: true),
+            },
+            reply: Result(
+                ok: "()",
+                err: CLike("SpiError"),
+            ),
+        ),
+    },
+)
+```
+
+## Generating a client interface
+
+This assumes you have an Idol file called `my_interface.idol` living somewhere
+in your source tree, which defines an IPC interface called `MyInterface`.
+
+By convention in Hubris we use "API crates" to hold IPC client interfaces; for
+your `my-interface`, this would conventionally be `my-interface-api`.
+
+Inside that crate, you need to add this to `Cargo.toml`:
+
+```toml
+[build-dependencies]
+idol = {git = "https://github.com/oxidecomputer/idol/"}
+```
+
+And then create a `build.rs` file containing at least the following:
+
+```rust
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    idol::client::build_client_stub(
+        "../../idl/my-interface.idol",  // or whatever path
+        "client_stub.rs",
+    )?;
+    Ok(())
+}
+```
+
+That will generate client code at build time. To actually _compile_ the
+generated code, you have to pull it into your `lib.rs` by adding:
+
+```rust
+include!(concat!(env!("OUT_DIR"), "/client_stub.rs"));
+```
+
+This will generate:
+
+- A `MyInterface` type that wraps a server `TaskId` and exposes methods for each
+  IPC operation. Methods take arguments in order, followed by leases (as
+  references).
+
+- A `MyInterfaceOperation` enum, which you don't generally need to use directly,
+  but is there if you need it.
+
+## Generating a server
+
+This assumes you have an Idol file called `my_interface.idol` living somewhere
+in your source tree, which defines an IPC interface called `MyInterface`.
+
+By convention in Hubris, the server for `my-interface` would be in a crate
+called `my-interface-server` (unless there are multiple implementations).
+
+Inside that crate, you need to add this to `Cargo.toml`:
+
+```toml
+[dependencies]
+idol-runtime = {git = "https://github.com/oxidecomputer/idol/"}
+
+[build-dependencies]
+idol = {git = "https://github.com/oxidecomputer/idol/"}
+```
+
+And then create a `build.rs` file containing at least the following:
+
+```rust
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    idol::server::build_server_support(
+        "../../idl/my-interface.idol",  // or whatever path
+        "server_stub.rs",
+        idol::server::ServerStyle::InOrder,
+    )?;
+    Ok(())
+}
+```
+
+(More on that `ServerStyle` in a moment.)
+
+That will generate server code at build time. To actually _compile_ the
+generated code, you have to pull it into your `main.rs` by adding:
+
+```rust
+include!(concat!(env!("OUT_DIR"), "/server_stub.rs"));
+```
+
+This will generate a trait describing the required implementation of the server.
+The trait is called `InOrderMyInterfaceImpl` in this case, and contains a
+function for each IPC operation. To finish writing a server, you must impl this
+trait for the type of your choice (generally, a struct holding your server's
+state).
+
+Finally, the generated code has provided plumbing for you to use this trait with
+the generic `idol_runtime::dispatch` function. Your server's main loop should
+resemble, at minimum:
+
+```rust
+let mut incoming = [0u8; INCOMING_SIZE];
+let mut server = MyServerImpl;
+loop {
+    idol_runtime::dispatch(&mut incoming, &mut server);
+}
+```
+
+## Variations and corner cases
+
+### Servers that use notifications
+
+To handle notifications,
+
+- Implement the `idol_runtime::NotificationHandler` trait for your server,
+  alongside the generated server trait.
+
+- Call `dispatch_n` instead of `dispatch`.
+
+### Servers that process multiple messages concurrently
+
+The default `InOrder` server style must reply to each message before accepting
+the next. Some servers are more complex than this and have multiple messages in
+flight. For such servers, switch the style to `Pipelined`.
+
+In `Pipelined` style, the generated trait changes: instead of each function
+returning the IPC's return type, they all return `()`. Its name also changes,
+from `InOrder(YourService)Impl` to `Pipelined(YourService)Impl`.
+
+This causes `dispatch` and friends to not automatically send replies, except in
+egregious cases (operation unknown, arguments failed to unmarshal). Instead,
+your impl of the server trait is responsible for replying to clients at the
+appropriate type, using `userlib::sys_reply` or a wrapper.
+
+When implementing a pipelined server, it's easy to accidentally forget to reply
+to clients -- be careful!
+
+### Using closed RECV
+
+Generated server traits include two functions supporting closed RECV, which are
+stubbed out by default. Implement them to be able to switch between open and
+closed at will:
+
+```rust
+    fn recv_source(&self) -> Option<userlib::TaskId>;
+    fn closed_recv_fail(&mut self);
+```
+
+`recv_source` names the task to listen to, or `None` for all tasks.
+`closed_recv_fail` will be called by `idol_runtime` if you name a specific task
+but that task has died.
+
+### Enums as arguments
+
+By default, Idol uses `zerocopy` to marshal and unmarshal argument and return
+types. This requires that, on the receiving side, any pattern of bits must be a
+valid member of the type. This isn't true for `bool` or most enums.
+
+You can request that Idol instead use `num_traits::FromPrimitive` to unmarshal
+values. Instead of
+
+```
+"cs_state": (type: "CsState"),
+```
+
+you want:
+
+```
+"cs_state": (
+    type: "CsState",
+    recv: FromPrimitive("u8"),
+,
+```
+
+The value taken by `recv` is an enum so we can add more methods in the future.
+
 [Hubris]: https://hubris.oxide.computer/
+[serde]: https://serde.rs/
+[RON]: https://docs.rs/ron/0.7.0/ron/
+
+
