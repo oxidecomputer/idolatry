@@ -1,16 +1,9 @@
 [package]
-name = "idol"
+name = "idol-runtime"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ron = "0.7"
-serde = "1.0"
-toml = "0.5.8"
-indexmap = {version = "1.7", features = ["serde-1"]}
-quote = "1.0"
-
-[workspace]
-members = ["runtime"]
+userlib = {git = "https://github.com/oxidecomputer/hubris"}
