@@ -34,7 +34,7 @@ pub struct Operation {
     /// Because this means that ergonomics changes to the API can affect runtime
     /// performance, we may want a way to override this eventually (TODO).
     #[serde(default)]
-    pub args: IndexMap<String, Arg>,
+    pub args: IndexMap<String, AttributedTy>,
     /// Arguments of the operation that are converted into leases. If omitted,
     /// zero leases are assumed.
     ///
@@ -50,16 +50,6 @@ pub struct Operation {
     /// by a crash need to be mapped into the result type.
     #[serde(default)]
     pub idempotent: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Arg {
-    /// Type being sent.
-    #[serde(rename = "type")]
-    pub ty: Ty,
-    /// Deserialization strategy to be used on RECV.
-    #[serde(default)]
-    pub recv: ArgRecvStrategy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,11 +74,91 @@ pub enum Reply {
     Result {
         /// On success (rc=0), the reply buffer will be interpreted as this
         /// type.
-        ok: Ty,
+        ok: AttributedTy,
         /// On failure (rc != 0), the given strategy will kick in.
         err: Error,
     },
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AttributedTy {
+    #[serde(rename = "type")]
+    pub ty: Ty,
+    #[serde(default)]
+    pub recv: RecvStrategy,
+}
+
+impl AttributedTy {
+    pub fn display(&self) -> &impl std::fmt::Display {
+        &self.ty.0
+    }
+
+    pub fn repr_ty(&self) -> &Ty {
+        match &self.recv {
+            RecvStrategy::From(t, _) | RecvStrategy::FromPrimitive(t) => t,
+            RecvStrategy::FromBytes => &self.ty,
+        }
+    }
+}
+
+#[derive(Default)]
+struct AttributedTyVisitor;
+
+impl<'de> serde::de::Visitor<'de> for AttributedTyVisitor {
+    type Value = AttributedTy;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("type name or attributed type struct")
+    }
+
+    fn visit_map<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+        where A: serde::de::MapAccess<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "lowercase")]
+        enum Field { Type, Recv }
+
+        let mut ty = None;
+        let mut recv = None;
+        while let Some(key) = access.next_key()? {
+            match key {
+                Field::Type => {
+                    if ty.is_some() {
+                        return Err(serde::de::Error::duplicate_field("type"));
+                    }
+                    ty = Some(access.next_value()?);
+                }
+                Field::Recv => {
+                    if recv.is_some() {
+                        return Err(serde::de::Error::duplicate_field("recv"));
+                    }
+                    recv = Some(access.next_value()?);
+                }
+            }
+        }
+        let ty = ty.ok_or_else(|| serde::de::Error::missing_field("type"))?;
+        let recv = recv.unwrap_or_else(RecvStrategy::default);
+        Ok(AttributedTy { ty, recv })
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where E: serde::de::Error
+    {
+        Ok(AttributedTy {
+            ty: Ty(v.to_string()),
+            recv: RecvStrategy::default(),
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for AttributedTy {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where D: serde::de::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(AttributedTyVisitor::default())
+    }
+}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -105,12 +175,13 @@ pub enum Error {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ArgRecvStrategy {
+pub enum RecvStrategy {
     FromBytes,
     FromPrimitive(Ty),
+    From(Ty, #[serde(default)] Option<String>),
 }
 
-impl Default for ArgRecvStrategy {
+impl Default for RecvStrategy {
     fn default() -> Self {
         Self::FromBytes
     }

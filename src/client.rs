@@ -36,12 +36,12 @@ pub fn generate_client_stub(
 
     writeln!(out, "#[derive(Clone, Debug)]")?;
     writeln!(out, "pub struct {} {{", iface.name)?;
-    writeln!(out, "    current_id: core::cell::Cell<abi::TaskId>,")?;
+    writeln!(out, "    current_id: core::cell::Cell<userlib::TaskId>,")?;
     writeln!(out, "}}")?;
     writeln!(out)?;
 
-    writeln!(out, "impl From<abi::TaskId> for {} {{", iface.name)?;
-    writeln!(out, "    fn from(x: abi::TaskId) -> Self {{")?;
+    writeln!(out, "impl From<userlib::TaskId> for {} {{", iface.name)?;
+    writeln!(out, "    fn from(x: userlib::TaskId) -> Self {{")?;
     writeln!(
         out,
         "        Self {{ current_id: core::cell::Cell::new(x) }}"
@@ -98,7 +98,7 @@ pub fn generate_client_stub(
         write!(out, "    )")?;
         match &op.reply {
             syntax::Reply::Result { ok, err } => {
-                write!(out, " -> Result<{}, ", ok.0)?;
+                write!(out, " -> Result<{}, ", ok.display())?;
                 match err {
                     syntax::Error::CLike(ty) => {
                         write!(out, "{}", ty.0)?;
@@ -140,7 +140,7 @@ pub fn generate_client_stub(
                 writeln!(
                     out,
                     "            let oksize = core::mem::size_of::<{}>();",
-                    ok.0
+                    ok.display()
                 )?;
                 match err {
                     syntax::Error::CLike(_ty) => {
@@ -195,19 +195,39 @@ pub fn generate_client_stub(
 
         match &op.reply {
             syntax::Reply::Result { ok, err } => {
+                let reply_ty = format!("{}_{}_REPLY", iface.name, name);
                 writeln!(out, "        if rc == 0 {{")?;
-                writeln!(out, "            let lv = zerocopy::LayoutVerified::<_, {}>::new_unaligned(&reply[..])", ok.0)?;
+                writeln!(out, "            #[derive(zerocopy::FromBytes, zerocopy::Unaligned)]")?;
+                writeln!(out, "            #[repr(C, packed)]")?;
+                writeln!(out, "            struct {} {{", reply_ty)?;
+                writeln!(out, "                value: {},", ok.repr_ty().0)?;
+                writeln!(out, "            }}")?;
+                writeln!(out, "            let lv = zerocopy::LayoutVerified::<_, {}>::new_unaligned(&reply[..])", reply_ty)?;
                 writeln!(out, "                .unwrap();")?;
-                writeln!(out, "            Ok((*lv).clone())")?;
+                writeln!(out, "            let v: {} = lv.value;", ok.repr_ty().0)?;
+                match &ok.recv {
+                    syntax::RecvStrategy::FromBytes => {
+                        writeln!(out, "            Ok(v)")?;
+                    }
+                    syntax::RecvStrategy::From(_, None) => {
+                        writeln!(out, "            Ok(v.into())")?;
+                    }
+                    syntax::RecvStrategy::From(_, Some(f)) => {
+                        writeln!(out, "            Ok({}(v))", f)?;
+                    }
+                    syntax::RecvStrategy::FromPrimitive(p) => {
+                        writeln!(out, "            Ok(<{} as userlib::FromPrimitive>::from_{}(v))", ok.ty.0, p.0)?;
+                    }
+                }
                 writeln!(out, "        }} else {{")?;
                 match err {
                     syntax::Error::CLike(ty) => {
                         writeln!(out, "            assert!(len == 0);")?;
                         writeln!(
                             out,
-                            "            if let Some(g) = abi::extract_new_generation(rc) {{"
+                            "            if let Some(g) = userlib::extract_new_generation(rc) {{"
                         )?;
-                        writeln!(out, "                self.current_id.set(abi::TaskId::for_index_and_gen(task.index(), g));")?;
+                        writeln!(out, "                self.current_id.set(userlib::TaskId::for_index_and_gen(task.index(), g));")?;
                         writeln!(out, "            }}")?;
                         writeln!(
                             out,

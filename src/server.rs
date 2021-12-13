@@ -62,7 +62,7 @@ pub fn generate_server_constants(
             syntax::Reply::Result { ok, .. } => {
                 // This strategy only uses bytes for the OK side of the type,
                 // and only sends one type, so:
-                writeln!(out, "core::mem::size_of::<{}>();", ok.0)?;
+                writeln!(out, "core::mem::size_of::<{}>();", ok.display())?;
             }
         }
 
@@ -93,10 +93,10 @@ pub fn generate_server_conversions(
         let mut need_args_impl = false;
         for (argname, arg) in &op.args {
             match &arg.recv {
-                syntax::ArgRecvStrategy::FromBytes => {
+                syntax::RecvStrategy::FromBytes => {
                     writeln!(out, "    pub {}: {},", argname, arg.ty.0)?;
                 }
-                syntax::ArgRecvStrategy::FromPrimitive(ty) => {
+                syntax::RecvStrategy::FromPrimitive(ty) | syntax::RecvStrategy::From(ty, _) => {
                     writeln!(out, "    pub raw_{}: {},", argname, ty.0)?;
                     need_args_impl = true;
                 }
@@ -109,7 +109,7 @@ pub fn generate_server_conversions(
             writeln!(out, "impl {}_{}_ARGS {{", iface.name, name)?;
             for (argname, arg) in &op.args {
                 match &arg.recv {
-                    syntax::ArgRecvStrategy::FromPrimitive(ty) => {
+                    syntax::RecvStrategy::FromPrimitive(ty) => {
                         writeln!(
                             out,
                             "    pub fn {}(&self) -> Option<{}> {{",
@@ -190,7 +190,7 @@ pub fn generate_server_in_order_trait(
 
         match &op.reply {
             syntax::Reply::Result { ok, err } => {
-                write!(out, " -> Result<{}, ", ok.0)?;
+                write!(out, " -> Result<{}, ", ok.display())?;
                 match err {
                     syntax::Error::CLike(ty) => {
                         write!(out, "{}", ty.0)?;
@@ -237,10 +237,25 @@ pub fn generate_server_in_order_trait(
         writeln!(out, "                    rm,")?;
         for (argname, arg) in &op.args {
             match &arg.recv {
-                syntax::ArgRecvStrategy::FromBytes => {
+                syntax::RecvStrategy::FromBytes => {
                     writeln!(out, "                    args.{},", argname)?;
                 }
-                syntax::ArgRecvStrategy::FromPrimitive(_) => {
+                syntax::RecvStrategy::From(_, None) => {
+                    writeln!(
+                        out,
+                        "                    args.raw_{}.into(),",
+                        argname
+                    )?;
+                }
+                syntax::RecvStrategy::From(_, Some(f)) => {
+                    writeln!(
+                        out,
+                        "                    {}(args.raw_{}),",
+                        f,
+                        argname
+                    )?;
+                }
+                syntax::RecvStrategy::FromPrimitive(_) => {
                     writeln!(
                         out,
                         "                    args.{}().ok_or(2u32)?,",
@@ -345,10 +360,25 @@ pub fn generate_server_pipelined_trait(
         writeln!(out, "                    rm,")?;
         for (argname, arg) in &op.args {
             match &arg.recv {
-                syntax::ArgRecvStrategy::FromBytes => {
+                syntax::RecvStrategy::FromBytes => {
                     writeln!(out, "                    args.{},", argname)?;
                 }
-                syntax::ArgRecvStrategy::FromPrimitive(_) => {
+                syntax::RecvStrategy::From(_, None) => {
+                    writeln!(
+                        out,
+                        "                    args.raw_{}.into(),",
+                        argname
+                    )?;
+                }
+                syntax::RecvStrategy::From(_, Some(f)) => {
+                    writeln!(
+                        out,
+                        "                    {}(args.raw_{}),",
+                        f,
+                        argname
+                    )?;
+                }
+                syntax::RecvStrategy::FromPrimitive(_) => {
                     writeln!(
                         out,
                         "                    args.{}().ok_or(2u32)?,",
