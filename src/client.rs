@@ -116,11 +116,29 @@ pub fn generate_client_stub(
         for argname in op.args.keys() {
             write!(out, "arg_{},", argname)?;
         }
+        for leasename in op.leases.keys() {
+            write!(out, "arg_{},", leasename)?;
+        }
         write!(out, ") = (")?;
         for argname in op.args.keys() {
             write!(out, "{},", argname)?;
         }
+        for leasename in op.leases.keys() {
+            write!(out, "{},", leasename)?;
+        }
         writeln!(out, ");")?;
+
+        // Perform lease validation.
+        for (leasename, lease) in &op.leases {
+            if let Some(n) = lease.max_len {
+                writeln!(out, "        if arg_{}.len() >= {} {{", leasename, n)?;
+                // Note: we're not generating a panic message in the client to
+                // save ROM space. If the user chases the line number into the
+                // client stub source file the error should be clear.
+                writeln!(out, "            panic!();")?;
+                writeln!(out, "        }}")?;
+            }
+        }
 
         // Define args struct.
         writeln!(out, "        #[allow(non_camel_case_types)]")?;
@@ -186,7 +204,7 @@ pub fn generate_client_stub(
             };
             writeln!(
                 out,
-                "                userlib::Lease::{}({}),",
+                "                userlib::Lease::{}(arg_{}),",
                 ctor, leasename
             )?;
         }
