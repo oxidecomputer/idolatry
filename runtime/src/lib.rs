@@ -92,8 +92,6 @@ pub fn dispatch<S, Op: ServerOp>(
         },
     };
 
-    let incoming = &buffer[..rm.message_len];
-
     let op = match Op::from_u32(rm.operation) {
         Some(op) => op,
         None => {
@@ -102,10 +100,14 @@ pub fn dispatch<S, Op: ServerOp>(
         }
     };
 
-    if rm.response_capacity < op.max_reply_size() {
+    let incoming_truncated = rm.message_len > buffer.len();
+    let reply_would_truncate = rm.response_capacity < op.max_reply_size();
+    if incoming_truncated || reply_would_truncate {
         sys_reply(rm.sender, 2, &[]);
         return;
     }
+
+    let incoming = &buffer[..rm.message_len];
 
     match server.handle(op, incoming, &rm) {
         Ok(()) => {
