@@ -286,13 +286,25 @@ pub fn generate_server_in_order_trait(
                 _ => unreachable!(),
             };
 
-            let suffix = if lease.ty.appears_unsized() {
-                "_slice"
+            let (suffix, limit) = if lease.ty.appears_unsized() {
+                let max_len = if let Some(n) = lease.max_len {
+                    // It's ok to unwrap the value in server code because we've
+                    // just gotten it _out of_ a NonZeroU32 here, so we know
+                    // it'll be statically valid.
+                    format!(", Some(core::num::NonZeroU32::new({}).unwrap())", n)
+                } else {
+                    ", None".to_string()
+                };
+                ("_slice", max_len)
             } else {
-                ""
+                if lease.max_len.is_some() {
+                    panic!("Lease {} on operation {}.{} has sized type but also max_len field",
+                        i, iface.name, opname);
+                }
+                ("", "".to_string())
             };
 
-            writeln!(out, "                    Leased::{}{}(rm.sender, {}).ok_or(2u32)?,", fun, suffix, i)?;
+            writeln!(out, "                    idol_runtime::Leased::{}{}(rm.sender, {}{}).ok_or(2u32)?,", fun, suffix, i, limit)?;
         }
         writeln!(out, "                );")?;
         match &op.reply {
