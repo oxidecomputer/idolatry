@@ -8,6 +8,7 @@
 use userlib::{FromPrimitive, TaskId, RecvMessage, sys_recv, sys_reply, sys_borrow_read, sys_borrow_write, sys_borrow_info, LeaseAttributes};
 use core::marker::PhantomData;
 use core::ops::Range;
+use core::num::NonZeroU32;
 use zerocopy::{AsBytes, FromBytes};
 
 /// Trait for a server to implement if it wants to be compatible with the
@@ -314,6 +315,7 @@ impl<A: Attribute, T> Leased<A, [T]> {
         lender: TaskId,
         index: usize,
         required_atts: LeaseAttributes,
+        max_len: Option<NonZeroU32>,
     ) -> Option<usize> {
         let info = sys_borrow_info(lender, index)?;
         if !info.attributes.contains(required_atts) {
@@ -322,7 +324,15 @@ impl<A: Attribute, T> Leased<A, [T]> {
         if info.len % core::mem::size_of::<T>() != 0 {
             return None;
         }
-        Some(info.len / core::mem::size_of::<T>())
+        let len = info.len / core::mem::size_of::<T>();
+
+        if let Some(max_len) = max_len {
+            if len > max_len.get() as usize {
+                return None;
+            }
+        }
+
+        Some(len)
     }
 }
 
@@ -358,8 +368,9 @@ impl<T> Leased<R, [T]> {
     pub fn read_only_slice(
         lender: TaskId,
         index: usize,
+        max_len: Option<NonZeroU32>,
     ) -> Option<Self> {
-        let len = Self::check_slice(lender, index, LeaseAttributes::READ)?;
+        let len = Self::check_slice(lender, index, LeaseAttributes::READ, max_len)?;
         Some(Self {
             lender,
             index,
@@ -401,8 +412,9 @@ impl<T> Leased<W, [T]> {
     pub fn write_only_slice(
         lender: TaskId,
         index: usize,
+        max_len: Option<NonZeroU32>,
     ) -> Option<Self> {
-        let len = Self::check_slice(lender, index, LeaseAttributes::WRITE)?;
+        let len = Self::check_slice(lender, index, LeaseAttributes::WRITE, max_len)?;
         Some(Self {
             lender,
             index,

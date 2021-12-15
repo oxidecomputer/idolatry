@@ -9,6 +9,7 @@
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroU32;
 
 /// Definition of an IPC interface.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +66,19 @@ pub struct Lease {
     /// must implement both `zerocopy::AsBytes` and `zerocopy::FromBytes`.
     #[serde(default)]
     pub write: bool,
+    /// The server cannot accept leases longer than this.
+    ///
+    /// This is only meaningful if `ty` is unsized, which at the moment means a
+    /// slice. It is measured in number of elements in the slice, _not_ number
+    /// of bytes.
+    ///
+    /// It's limited to `u32` rather than `usize` because in the current kernel
+    /// ABI, individual leases are limited to 4GiB. This also means that, if
+    /// this value is not provided, the limit defaults to 4GiB.
+    ///
+    /// If provided, the value cannot be zero.
+    #[serde(default)]
+    pub max_len: Option<NonZeroU32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
