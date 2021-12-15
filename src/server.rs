@@ -148,6 +148,7 @@ fn generate_server_op_impl(
     mut out: impl Write,
 ) -> Result<(), Box<dyn std::error::Error>> {
     writeln!(out, "impl idol_runtime::ServerOp for {}Operation {{", iface.name)?;
+
     writeln!(out, "    fn max_reply_size(&self) -> usize {{")?;
     writeln!(out, "        match self {{")?;
     for opname in iface.ops.keys() {
@@ -156,6 +157,8 @@ fn generate_server_op_impl(
     }
     writeln!(out, "        }}")?;
     writeln!(out, "    }}")?;
+    writeln!(out)?;
+
     writeln!(out, "}}")?;
 
     Ok(())
@@ -185,6 +188,16 @@ pub fn generate_server_in_order_trait(
         writeln!(out, "        msg: &userlib::RecvMessage,")?;
         for (argname, arg) in &op.args {
             writeln!(out, "        {}: {},", argname, arg.ty.0)?;
+        }
+        for (leasename, lease) in &op.leases {
+            write!(out, "        {}: idol_runtime::Leased<idol_runtime::", leasename)?;
+            if lease.read {
+                write!(out, "R")?;
+            }
+            if lease.write {
+                write!(out, "W")?;
+            }
+            writeln!(out, ", {}>,", lease.ty.0)?;
         }
         write!(out, ")")?;
 
@@ -263,6 +276,23 @@ pub fn generate_server_in_order_trait(
                     )?;
                 }
             }
+        }
+        for (i, lease) in op.leases.values().enumerate() {
+            // This is gross, but, let's spot us some slices :-(
+            let fun = match (lease.read, lease.write) {
+                (true, false) => "read_only",
+                (false, true) => "write_only",
+                (true, true) => "read_write",
+                _ => unreachable!(),
+            };
+
+            let suffix = if lease.ty.appears_unsized() {
+                "_slice"
+            } else {
+                ""
+            };
+
+            writeln!(out, "                    Leased::{}{}(rm.sender, {}).ok_or(2u32)?,", fun, suffix, i)?;
         }
         writeln!(out, "                );")?;
         match &op.reply {

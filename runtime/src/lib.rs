@@ -5,7 +5,10 @@
 //! Most uses of Idol don't need to pull this crate in, but generated servers
 //! often do.
 
-use userlib::{FromPrimitive, TaskId, RecvMessage, sys_recv, sys_reply};
+use userlib::{FromPrimitive, TaskId, RecvMessage, sys_recv, sys_reply, sys_borrow_read, sys_borrow_write, sys_borrow_info, LeaseAttributes};
+use core::marker::PhantomData;
+use core::ops::Range;
+use zerocopy::{AsBytes, FromBytes};
 
 /// Trait for a server to implement if it wants to be compatible with the
 /// generated dispatch loops that also route notifications.
@@ -182,6 +185,373 @@ pub fn dispatch_n<S: NotificationHandler, Op: ServerOp>(
             // stub has used the convenience return for data-less errors,
             // we'll do the reply.
             sys_reply(rm.sender, code, &[]);
+        }
+    }
+}
+
+/// Marker trait implemented by types that can serve as lease attribute
+/// indicators.
+///
+/// This is not intended to be implemented by types outside this module -- it
+/// exists solely to provide some user guidance on which types can appear in the
+/// "attribute" position on the `Leased` type.
+pub trait Attribute {}
+
+/// Marker trait for `Attribute` types that signal read access to leased data.
+pub trait AttributeRead: Attribute {}
+
+/// Marker trait for `Attribute` types that signal write access to leased data.
+pub trait AttributeWrite: Attribute {}
+
+/// Type used to configure `Leased` for data that can only be read.
+///
+/// This type serves as a marker only and is never created or manipulated at
+/// runtime.
+pub enum R {}
+
+impl Attribute for R {}
+impl AttributeRead for R {}
+
+/// Type used to configure `Leased` for data that can only be written.
+///
+/// This type serves as a marker only and is never created or manipulated at
+/// runtime.
+pub enum W {}
+
+impl Attribute for W {}
+impl AttributeWrite for W {}
+
+/// Type used to configure `Leased` for data that can be both read and written.
+///
+/// This type serves as a marker only and is never created or manipulated at
+/// runtime.
+pub enum RW {}
+
+impl Attribute for RW {}
+impl AttributeRead for RW {}
+impl AttributeWrite for RW {}
+
+/// Handle to some leased data sent by a client.
+///
+/// `Leased<A, T>` indicates data of type `T`, held in client memory, and
+/// temporarily loaned to us with attributes `A`. In practice, `A` can be `R`,
+/// `W`, or `RW`, for read-only, write-only, and read-write accesses,
+/// respectively.
+///
+/// The server dispatch routines will prepare a `Leased` handle for each lease
+/// defined for an operation in the Idol file. When the server implementation
+/// is invoked, it can assume the following properties of the `Leased` data:
+///
+/// 1. The client actually sent the corresponding lease.
+/// 2. The attributes used on the lease by the client match `A`.
+/// 3. The size of the leased data is correct for `T` -- either it contains
+///    exactly one `T`, or, if `T` is a slice `[E]` for some type `E`, it
+///    contains an integral number of values of type `E`.
+///
+/// If any of these checks fail, the dispatch code will return an error to the
+/// client before calling into the server impl.
+pub struct Leased<A: Attribute, T: ?Sized> {
+    /// Source of this lease.
+    lender: TaskId,
+    /// Index of this lease in the lender's lease table.
+    index: usize,
+    /// Number of bytes leased, cached from the borrow info.
+    len: usize,
+    /// Marker to make type magic work.
+    _marker: PhantomData<(A, *const T)>,
+}
+
+/// These functions are available on any `Leased<A, T>` independent of the
+/// choice of `A` and `T`.
+impl<A: Attribute, T: ?Sized> Leased<A, T> {
+    /// Gets the `TaskId` of the task that's lending this data.
+    pub fn lender(&self) -> TaskId {
+        self.lender
+    }
+
+    /// Gets the index of this lease in the lender's lease table. This is
+    /// available in case you need to do raw operations on the data, outside
+    /// this API.
+    pub fn lease_index(&self) -> usize {
+        self.index
+    }
+}
+
+/// These functions are available on any `Leased<A, T>` where `T` is `Sized`.
+impl<A: Attribute, T> Leased<A, T> {
+    /// Internal implementation factor for checking `Sized` T.
+    fn check_sized(
+        lender: TaskId,
+        index: usize,
+        required_atts: LeaseAttributes,
+    ) -> Option<()> {
+        let info = sys_borrow_info(lender, index)?;
+        if !info.attributes.contains(required_atts) {
+            return None;
+        }
+        if info.len != core::mem::size_of::<T>() {
+            return None;
+        }
+        Some(())
+    }
+}
+
+/// These functions are available on any `Leased<A, [T]>`, that is, any leased
+/// slice independent of the choice of attributes.
+impl<A: Attribute, T> Leased<A, [T]> {
+    /// Returns the number of elements of type `T` in the leased slice.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Checks whether the leased slice is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Internal implementation factor for checking slices.
+    fn check_slice(
+        lender: TaskId,
+        index: usize,
+        required_atts: LeaseAttributes,
+    ) -> Option<usize> {
+        let info = sys_borrow_info(lender, index)?;
+        if !info.attributes.contains(required_atts) {
+            return None;
+        }
+        if info.len % core::mem::size_of::<T>() != 0 {
+            return None;
+        }
+        Some(info.len / core::mem::size_of::<T>())
+    }
+}
+
+/// These functions are only available for read-only leased data for `Sized`
+/// types, i.e. leases of a single struct or similar.
+impl<T> Leased<R, T> {
+    /// Creates a new `Leased` describing read-only data. This is intended to be
+    /// called from the generated server stub code.
+    ///
+    /// This operation will perform `sys_borrow_info` to check the properties
+    /// described in the docs for `Leased`. If any fail, it returns `None`.
+    pub fn read_only(
+        lender: TaskId,
+        index: usize,
+    ) -> Option<Self> {
+        Self::check_sized(lender, index, LeaseAttributes::READ)?;
+        Some(Self {
+            lender,
+            index,
+            len: 1,
+            _marker: PhantomData,
+        })
+    }
+}
+
+/// These functions are only available for read-only leased slices.
+impl<T> Leased<R, [T]> {
+    /// Creates a new `Leased` describing a read-only slice. This is intended to
+    /// be called from the generated server stub code.
+    ///
+    /// This operation will perform `sys_borrow_info` to check the properties
+    /// described in the docs for `Leased`. If any fail, it returns `None`.
+    pub fn read_only_slice(
+        lender: TaskId,
+        index: usize,
+    ) -> Option<Self> {
+        let len = Self::check_slice(lender, index, LeaseAttributes::READ)?;
+        Some(Self {
+            lender,
+            index,
+            len,
+            _marker: PhantomData,
+        })
+    }
+}
+
+/// These functions are only available for write-only leases of `Sized` types,
+/// e.g. a single leased struct or similar.
+impl<T> Leased<W, T> {
+    /// Creates a new `Leased` describing write-only data. This is intended to
+    /// be called from the generated server stub code.
+    ///
+    /// This operation will perform `sys_borrow_info` to check the properties
+    /// described in the docs for `Leased`. If any fail, it returns `None`.
+    pub fn write_only(
+        lender: TaskId,
+        index: usize,
+    ) -> Option<Self> {
+        Self::check_sized(lender, index, LeaseAttributes::WRITE)?;
+        Some(Self {
+            lender,
+            index,
+            len: 1,
+            _marker: PhantomData,
+        })
+    }
+}
+
+/// These functions are only available for write-only slices.
+impl<T> Leased<W, [T]> {
+    /// Creates a new `Leased` describing a write-only slice. This is intended
+    /// to be called from the generated server stub code.
+    ///
+    /// This operation will perform `sys_borrow_info` to check the properties
+    /// described in the docs for `Leased`. If any fail, it returns `None`.
+    pub fn write_only_slice(
+        lender: TaskId,
+        index: usize,
+    ) -> Option<Self> {
+        let len = Self::check_slice(lender, index, LeaseAttributes::WRITE)?;
+        Some(Self {
+            lender,
+            index,
+            len,
+            _marker: PhantomData,
+        })
+    }
+}
+
+/// These functions are available on any readable lease (that is, read-only or
+/// read-write) where the content type `T` is `Sized` and can be moved around by
+/// naive mem-copy.
+impl<A: AttributeRead, T: Sized + Copy + FromBytes + AsBytes> Leased<A, T> {
+    /// Reads the leased value by copy.
+    ///
+    /// If the lending task has been restarted between the time we checked lease
+    /// attributes and the time you call `read`, this will return `None`.
+    /// Otherwise, it returns `Some(value)`. It's therefore safe to treat a
+    /// `None` return as aborting the request.
+    pub fn read(&self) -> Option<T> {
+        let mut temp = T::new_zeroed();
+        let (rc, len) = sys_borrow_read(self.lender, self.index, 0, temp.as_bytes_mut());
+        if rc != 0 || len != core::mem::size_of::<T>() {
+            None
+        } else {
+            Some(temp)
+        }
+    }
+}
+
+/// These functions are available on any readable leased slice (that is,
+/// read-only or read-write) where the element type `T` is `Sized` and can be
+/// moved around by naive mem-copy.
+impl<A: AttributeRead, T: Sized + Copy + FromBytes + AsBytes> Leased<A, [T]> {
+    /// Reads a single element of the leased slice by copy.
+    ///
+    /// Like indexing a native slice, `index` must be less than `self.len()`, or
+    /// this will panic.
+    ///
+    /// If the lending task has been restarted between the time we checked lease
+    /// attributes and the time you call `read_at`, this will return `None`.
+    /// Otherwise, it returns `Some(value)`. It's therefore safe to treat a
+    /// `None` return as aborting the request.
+    pub fn read_at(&self, index: usize) -> Option<T> {
+        assert!(index < self.len);
+
+        let mut temp = T::new_zeroed();
+        let offset = core::mem::size_of::<T>()
+            .checked_mul(index)?;
+        let (rc, len) = sys_borrow_read(self.lender, self.index, offset, temp.as_bytes_mut());
+        if rc != 0 || len != core::mem::size_of::<T>() {
+            None
+        } else {
+            Some(temp)
+        }
+    }
+
+    /// Reads a range of elements of the leased slice into `dest` by copy.
+    ///
+    /// Like indexing a native slice, `range.start` must be less than
+    /// `self.len()`, and `range.end` must be less than or equal to
+    /// `self.len()`, or this will panic.
+    ///
+    /// If the lending task has been restarted between the time we checked lease
+    /// attributes and the time you call `read_range`, this will return `None`.
+    /// Otherwise, it returns `Some(value)`. It's therefore safe to treat a
+    /// `None` return as aborting the request.
+    pub fn read_range(&self, range: Range<usize>, dest: &mut [T]) -> Result<(), ()> {
+        let offset = core::mem::size_of::<T>()
+            .checked_mul(range.start).ok_or(())?;
+        let expected_len = core::mem::size_of::<T>()
+            .checked_mul(range.end - range.start).ok_or(())?;
+
+        let (rc, len) = sys_borrow_read(self.lender, self.index, offset, dest.as_bytes_mut());
+
+        if rc != 0 || len != expected_len {
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// These functions are available on any writable lease (that is, write-only or
+/// read-write) where the content type `T` is `Sized` and can be moved around by
+/// naive mem-copy.
+impl<A: AttributeWrite, T: Sized + Copy + AsBytes> Leased<A, T> {
+    /// Writes the leased value by copy.
+    ///
+    /// If the lending task has been restarted between the time we checked lease
+    /// attributes and the time you call `write`, this will return `Err(())`.
+    /// Otherwise, it returns `Ok(())`. It's therefore safe to treat an `Err`
+    /// return as aborting the request.
+    pub fn write(&self, value: T) -> Result<(), ()> {
+        let (rc, len) = sys_borrow_write(self.lender, self.index, 0, value.as_bytes());
+        if rc != 0 || len != core::mem::size_of::<T>() {
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// These functions are available on any writable leased slice (that is,
+/// write-only or read-write) where the element type `T` is `Sized` and can be
+/// moved around by naive mem-copy.
+impl<A: AttributeWrite, T: Sized + Copy + AsBytes> Leased<A, [T]> {
+    /// Writes a single element of the leased slice by copy.
+    ///
+    /// Like indexing a native slice, `index` must be less than `self.len()`, or
+    /// this will panic.
+    ///
+    /// If the lending task has been restarted between the time we checked lease
+    /// attributes and the time you call `write_at`, this will return `Err(())`.
+    /// Otherwise, it returns `Ok(())`. It's therefore safe to treat an `Err`
+    /// return as aborting the request.
+    pub fn write_at(&self, index: usize, value: T) -> Result<(), ()> {
+        let offset = core::mem::size_of::<T>()
+            .checked_mul(index).ok_or(())?;
+        let (rc, len) = sys_borrow_write(self.lender, self.index, offset, value.as_bytes());
+        if rc != 0 || len != core::mem::size_of::<T>() {
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Writes a range of elements from `src` into the leased slice by copy.
+    ///
+    /// Like indexing a native slice, `range.start` must be less than
+    /// `self.len()`, and `range.end` must be less than or equal to
+    /// `self.len()`, or this will panic.
+    ///
+    /// If the lending task has been restarted between the time we checked lease
+    /// attributes and the time you call `write_range`, this will return
+    /// `Err(())`. Otherwise, it returns `Ok(())`. It's therefore safe to treat
+    /// an `Err` return as aborting the request.
+    pub fn write_range(&self, range: Range<usize>, src: &[T]) -> Result<(), ()> {
+        let offset = core::mem::size_of::<T>()
+            .checked_mul(range.start).ok_or(())?;
+        let expected_len = core::mem::size_of::<T>()
+            .checked_mul(range.end - range.start).ok_or(())?;
+
+        let (rc, len) = sys_borrow_write(self.lender, self.index, offset, src.as_bytes());
+
+        if rc != 0 || len != expected_len {
+            Err(())
+        } else {
+            Ok(())
         }
     }
 }

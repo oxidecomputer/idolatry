@@ -164,6 +164,13 @@ impl<'de> Deserialize<'de> for AttributedTy {
 #[serde(transparent)]
 pub struct Ty(pub String);
 
+impl Ty {
+    pub fn appears_unsized(&self) -> bool {
+        // This is a hack. Need to work out a better way to determine this.
+        self.0.starts_with('[') && self.0.ends_with(']')
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Error {
     /// The error type should be created from the (non-zero) return code only.
