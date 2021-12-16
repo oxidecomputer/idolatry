@@ -190,14 +190,25 @@ pub fn generate_server_in_order_trait(
             writeln!(out, "        {}: {},", argname, arg.ty.0)?;
         }
         for (leasename, lease) in &op.leases {
-            write!(out, "        {}: idol_runtime::Leased<idol_runtime::", leasename)?;
-            if lease.read {
-                write!(out, "R")?;
+            if let Some(n) = &lease.max_len {
+                write!(out, "        {}: idol_runtime::LenLimit<idol_runtime::Leased<idol_runtime::", leasename)?;
+                if lease.read {
+                    write!(out, "R")?;
+                }
+                if lease.write {
+                    write!(out, "W")?;
+                }
+                writeln!(out, ", {}>, {}>,", lease.ty.0, n)?;
+            } else {
+                write!(out, "        {}: idol_runtime::Leased<idol_runtime::", leasename)?;
+                if lease.read {
+                    write!(out, "R")?;
+                }
+                if lease.write {
+                    write!(out, "W")?;
+                }
+                writeln!(out, ", {}>,", lease.ty.0)?;
             }
-            if lease.write {
-                write!(out, "W")?;
-            }
-            writeln!(out, ", {}>,", lease.ty.0)?;
         }
         write!(out, ")")?;
 
@@ -237,6 +248,7 @@ pub fn generate_server_in_order_trait(
     writeln!(out, "        incoming: &[u8],")?;
     writeln!(out, "        rm: &userlib::RecvMessage,")?;
     writeln!(out, "    ) -> Result<(), u32> {{")?;
+    writeln!(out, "        use core::convert::TryInto;")?;
     writeln!(out, "        match op {{")?;
     for (opname, op) in &iface.ops {
         writeln!(out, "            {}Operation::{} => {{", iface.name, opname)?;
@@ -304,7 +316,11 @@ pub fn generate_server_in_order_trait(
                 ("", "".to_string())
             };
 
-            writeln!(out, "                    idol_runtime::Leased::{}{}(rm.sender, {}{}).ok_or(2u32)?,", fun, suffix, i, limit)?;
+            write!(out, "                    idol_runtime::Leased::{}{}(rm.sender, {}{}).ok_or(2u32)?", fun, suffix, i, limit)?;
+            if lease.max_len.is_some() {
+                write!(out, ".try_into().unwrap()")?;
+            }
+            writeln!(out, ",")?;
         }
         writeln!(out, "                );")?;
         match &op.reply {
