@@ -567,3 +567,66 @@ impl<A: AttributeWrite, T: Sized + Copy + AsBytes> Leased<A, [T]> {
         }
     }
 }
+
+/// A `T` that has had its length checked to be no greater than `N`.
+///
+/// While this type is written generically, it's only used in practice with `T`
+/// being `Leased<A, [E]>`.
+///
+/// `LenLimit` implements `Deref` and `DerefMut`, so all the operations from the
+/// type `T` are available. That is, you can generally treat it like a `Leased`.
+pub struct LenLimit<T, const N: usize>(T);
+
+impl<A: Attribute, T, const N: usize> LenLimit<Leased<A, [T]>, N> {
+    /// Gets the length of the slice as a `u16` if it has been previously
+    /// checked to be 65535 elements or less.
+    ///
+    /// Note that it is possible to call this function even when `N` is too
+    /// large; this is because we're missing some const generics features still
+    /// that would let us assert on that. Instead, if you do this when `N` is
+    /// too large, you will get a panic. When `N` is in range, the check will
+    /// compile out.
+    pub fn len_as_u16(this: &Self) -> u16 {
+        assert!(N <= u16::MAX as usize);
+        this.0.len() as u16
+    }
+
+    /// Gets the length of the slice as a `u8` if it has been previously
+    /// checked to be 255 elements or less.
+    ///
+    /// Note that it is possible to call this function even when `N` is too
+    /// large; this is because we're missing some const generics features still
+    /// that would let us assert on that. Instead, if you do this when `N` is
+    /// too large, you will get a panic. When `N` is in range, the check will
+    /// compile out.
+    pub fn len_as_u8(this: &Self) -> u8 {
+        assert!(N <= u8::MAX as usize);
+        this.0.len() as u8
+    }
+}
+
+impl<A: Attribute, T, const N: usize> TryFrom<Leased<A, [T]>> for LenLimit<Leased<A, [T]>, N> {
+    type Error = ();
+
+    fn try_from(x: Leased<A, [T]>) -> Result<Self, Self::Error> {
+        if x.len() <= N {
+            Ok(Self(x))
+        } else {
+            Err(())
+        }
+    }
+}
+
+impl<T, const N: usize> core::ops::Deref for LenLimit<T, N> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T, const N: usize> core::ops::DerefMut for LenLimit<T, N> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
