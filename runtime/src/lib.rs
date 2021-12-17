@@ -11,6 +11,20 @@ use core::ops::Range;
 use core::num::NonZeroU32;
 use zerocopy::{AsBytes, FromBytes};
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum ClientError {
+    UnknownOperation = 0xFFFF_FE00,
+    BadMessage = 0xFFFF_FE01,
+    BadLease = 0xFFFF_FE02,
+}
+
+impl From<ClientError> for u32 {
+    fn from(x: ClientError) -> Self {
+        x as u32
+    }
+}
+
 /// Trait for a server to implement if it wants to be compatible with the
 /// generated dispatch loops that also route notifications.
 ///
@@ -99,7 +113,7 @@ pub fn dispatch<S, Op: ServerOp>(
     let op = match Op::from_u32(rm.operation) {
         Some(op) => op,
         None => {
-            sys_reply(rm.sender, 1, &[]);
+            sys_reply(rm.sender, ClientError::UnknownOperation as u32, &[]);
             return;
         }
     };
@@ -107,7 +121,7 @@ pub fn dispatch<S, Op: ServerOp>(
     let incoming_truncated = rm.message_len > buffer.len();
     let reply_would_truncate = rm.response_capacity < op.max_reply_size();
     if incoming_truncated || reply_would_truncate {
-        sys_reply(rm.sender, 2, &[]);
+        sys_reply(rm.sender, ClientError::BadMessage as u32, &[]);
         return;
     }
 
@@ -168,13 +182,13 @@ pub fn dispatch_n<S: NotificationHandler, Op: ServerOp>(
     let op = match Op::from_u32(rm.operation) {
         Some(op) => op,
         None => {
-            sys_reply(rm.sender, 1, &[]);
+            sys_reply(rm.sender, ClientError::UnknownOperation as u32, &[]);
             return;
         }
     };
 
     if rm.response_capacity < op.max_reply_size() {
-        sys_reply(rm.sender, 2, &[]);
+        sys_reply(rm.sender, ClientError::BadMessage as u32, &[]);
         return;
     }
 

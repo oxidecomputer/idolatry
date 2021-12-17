@@ -245,12 +245,13 @@ pub fn generate_server_in_order_trait(
     writeln!(out, "        rm: &userlib::RecvMessage,")?;
     writeln!(out, "    ) -> Result<(), u32> {{")?;
     writeln!(out, "        use core::convert::TryInto;")?;
+    writeln!(out, "        use idol_runtime::ClientError;")?;
     writeln!(out, "        match op {{")?;
     for (opname, op) in &iface.ops {
         writeln!(out, "            {}Operation::{} => {{", iface.name, opname)?;
         writeln!(
             out,
-            "                let {}args = read_{}_msg(incoming).ok_or(2u32)?;",
+            "                let {}args = read_{}_msg(incoming).ok_or(ClientError::BadMessage)?;",
             if op.args.is_empty() { "_" } else { "" },
             opname
         )?;
@@ -279,7 +280,7 @@ pub fn generate_server_in_order_trait(
                 syntax::RecvStrategy::FromPrimitive(_) => {
                     writeln!(
                         out,
-                        "                    args.{}().ok_or(2u32)?,",
+                        "                    args.{}().ok_or(ClientError::BadMessage)?,",
                         argname
                     )?;
                 }
@@ -312,7 +313,7 @@ pub fn generate_server_in_order_trait(
                 ("", "".to_string())
             };
 
-            write!(out, "                    idol_runtime::Leased::{}{}(rm.sender, {}{}).ok_or(2u32)?", fun, suffix, i, limit)?;
+            write!(out, "                    idol_runtime::Leased::{}{}(rm.sender, {}{}).ok_or(ClientError::BadLease)?", fun, suffix, i, limit)?;
             if lease.max_len.is_some() {
                 write!(out, ".try_into().unwrap()")?;
             }
