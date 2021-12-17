@@ -10,7 +10,6 @@ use std::path::PathBuf;
 
 pub enum ServerStyle {
     InOrder,
-    Pipelined,
 }
 
 pub fn build_server_support(
@@ -32,9 +31,6 @@ pub fn build_server_support(
     match style {
         ServerStyle::InOrder => {
             generate_server_in_order_trait(&iface, &mut stub_file)?;
-        }
-        ServerStyle::Pipelined => {
-            generate_server_pipelined_trait(&iface, &mut stub_file)?;
         }
     }
     println!("cargo:rerun-if-changed={}", source);
@@ -343,109 +339,6 @@ pub fn generate_server_in_order_trait(
                 writeln!(out, "                }}")?;
             }
         }
-        writeln!(out, "            }}")?;
-    }
-    writeln!(out, "        }}")?;
-    writeln!(out, "    }}")?;
-
-    writeln!(out, "}}")?;
-    writeln!(out)?;
-
-    Ok(())
-}
-
-pub fn generate_server_pipelined_trait(
-    iface: &syntax::Interface,
-    mut out: impl Write,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let trt = format!("Pipelined{}Impl", iface.name);
-
-    writeln!(out, "pub trait {} {{", trt)?;
-
-    writeln!(
-        out,
-        "    fn recv_source(&self) -> Option<userlib::TaskId> {{"
-    )?;
-    writeln!(out, "        None")?;
-    writeln!(out, "    }}")?;
-    writeln!(out)?;
-    writeln!(out, "    fn closed_recv_fail(&mut self) {{")?;
-    writeln!(out, "        panic!()")?;
-    writeln!(out, "    }}")?;
-    writeln!(out)?;
-
-    for (name, op) in &iface.ops {
-        writeln!(out, "    fn {}(", name)?;
-        writeln!(out, "        &mut self,")?;
-        writeln!(out, "        rm: &userlib::RecvMessage,")?;
-        for (argname, arg) in &op.args {
-            writeln!(out, "        {}: {},", argname, arg.ty.0)?;
-        }
-        writeln!(out, "    );")?;
-    }
-    writeln!(out, "}}")?;
-
-    writeln!(out, "impl<S: {}> idol_runtime::Server<{}Operation> for (core::marker::PhantomData<{1}Operation>, &'_ mut S) {{", trt, iface.name)?;
-
-    writeln!(
-        out,
-        "    fn recv_source(&self) -> Option<userlib::TaskId> {{"
-    )?;
-    writeln!(out, "        <S as {}>::recv_source(self.1)", trt)?;
-    writeln!(out, "    }}")?;
-    writeln!(out)?;
-    writeln!(out, "    fn closed_recv_fail(&mut self) {{")?;
-    writeln!(out, "        <S as {}>::closed_recv_fail(self.1)", trt)?;
-    writeln!(out, "    }}")?;
-    writeln!(out)?;
-
-    writeln!(out, "    fn handle(")?;
-    writeln!(out, "        &mut self,")?;
-    writeln!(out, "        op: {}Operation,", iface.name)?;
-    writeln!(out, "        incoming: &[u8],")?;
-    writeln!(out, "        rm: &userlib::RecvMessage,")?;
-    writeln!(out, "    ) -> Result<(), u32> {{")?;
-    writeln!(out, "        match op {{")?;
-    for (opname, op) in &iface.ops {
-        writeln!(out, "            {}Operation::{} => {{", iface.name, opname)?;
-        writeln!(
-            out,
-            "                let {}args = read_{}_msg(incoming).ok_or(2u32)?;",
-            if op.args.is_empty() { "_" } else { "" },
-            opname
-        )?;
-        writeln!(out, "                self.1.{}(", opname)?;
-        writeln!(out, "                    rm,")?;
-        for (argname, arg) in &op.args {
-            match &arg.recv {
-                syntax::RecvStrategy::FromBytes => {
-                    writeln!(out, "                    args.{},", argname)?;
-                }
-                syntax::RecvStrategy::From(_, None) => {
-                    writeln!(
-                        out,
-                        "                    args.raw_{}.into(),",
-                        argname
-                    )?;
-                }
-                syntax::RecvStrategy::From(_, Some(f)) => {
-                    writeln!(
-                        out,
-                        "                    {}(args.raw_{}),",
-                        f,
-                        argname
-                    )?;
-                }
-                syntax::RecvStrategy::FromPrimitive(_) => {
-                    writeln!(
-                        out,
-                        "                    args.{}().ok_or(2u32)?,",
-                        argname
-                    )?;
-                }
-            }
-        }
-        writeln!(out, "                );")?;
         writeln!(out, "            }}")?;
     }
     writeln!(out, "        }}")?;
