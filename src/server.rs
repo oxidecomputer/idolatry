@@ -210,13 +210,13 @@ pub fn generate_server_in_order_trait(
 
         match &op.reply {
             syntax::Reply::Result { ok, err } => {
-                write!(out, " -> Result<{}, ", ok.display())?;
+                write!(out, " -> Result<{}, idol_runtime::RequestError<", ok.display())?;
                 match err {
                     syntax::Error::CLike(ty) => {
                         write!(out, "{}", ty.0)?;
                     }
                 }
-                write!(out, ">")?;
+                write!(out, ">>")?;
             }
         }
         writeln!(out, ";")?;
@@ -244,6 +244,7 @@ pub fn generate_server_in_order_trait(
     writeln!(out, "        incoming: &[u8],")?;
     writeln!(out, "        rm: &userlib::RecvMessage,")?;
     writeln!(out, "    ) -> Result<(), u32> {{")?;
+    writeln!(out, "        #[allow(unused_imports)]")?;
     writeln!(out, "        use core::convert::TryInto;")?;
     writeln!(out, "        use idol_runtime::ClientError;")?;
     writeln!(out, "        match op {{")?;

@@ -17,11 +17,44 @@ pub enum ClientError {
     UnknownOperation = 0xFFFF_FE00,
     BadMessage = 0xFFFF_FE01,
     BadLease = 0xFFFF_FE02,
+    WentAway = 0xFFFF_FE03,
 }
 
 impl From<ClientError> for u32 {
     fn from(x: ClientError) -> Self {
         x as u32
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum RequestError<E> {
+    Runtime(E),
+    Fail(ClientError),
+}
+
+impl<E> RequestError<E> {
+    pub fn went_away() -> Self {
+        Self::Fail(ClientError::WentAway)
+    }
+}
+
+impl<E> From<E> for RequestError<E> {
+    fn from(e: E) -> Self {
+        Self::Runtime(e)
+    }
+}
+
+/// This impl requires that E produce a u16, instead of a u32, to ensure that we
+/// can zero-extend it and not conflict with any of the values of `ClientError`.
+impl<E> From<RequestError<E>> for u32
+    where u16: From<E>,
+{
+    fn from(e: RequestError<E>) -> Self {
+        match e {
+            RequestError::Runtime(r) => u32::from(u16::from(r)),
+            RequestError::Fail(x) => u32::from(x),
+        }
     }
 }
 
