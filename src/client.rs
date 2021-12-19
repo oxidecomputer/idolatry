@@ -131,7 +131,7 @@ pub fn generate_client_stub(
         // Perform lease validation.
         for (leasename, lease) in &op.leases {
             if let Some(n) = lease.max_len {
-                writeln!(out, "        if arg_{}.len() >= {} {{", leasename, n)?;
+                writeln!(out, "        if arg_{}.len() > {} {{", leasename, n)?;
                 // Note: we're not generating a panic message in the client to
                 // save ROM space. If the user chases the line number into the
                 // client stub source file the error should be clear.
