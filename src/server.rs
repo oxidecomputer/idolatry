@@ -33,6 +33,8 @@ pub fn build_server_support(
             generate_server_in_order_trait(&iface, &mut stub_file)?;
         }
     }
+
+    generate_server_section(&iface, &text, &mut stub_file)?;
     println!("cargo:rerun-if-changed={}", source);
     Ok(())
 }
@@ -348,6 +350,35 @@ pub fn generate_server_in_order_trait(
 
     writeln!(out, "}}")?;
     writeln!(out)?;
+
+    Ok(())
+}
+
+fn generate_server_section(
+    iface: &syntax::Interface,
+    text: &str,
+    mut out: impl Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = text.as_bytes();
+
+    write!(
+        out,
+        r##"
+// To allow it to be pulled out by debuggers, we drop the entirety of the
+// interface definition in a dedicated (unloaded) section
+#[used]
+#[link_section = ".idolatry"]
+static _{}_IDOL_DEFINITION: [u8; {}] = ["##,
+        iface.name.to_uppercase(),
+        text.len()
+    )?;
+
+    for i in 0..bytes.len() {
+        let delim = if i % 10 == 0 { "\n    " } else { " " };
+        write!(out, "{}0x{:02x},", delim, bytes[i])?;
+    }
+
+    writeln!(out, "\n];\n")?;
 
     Ok(())
 }
