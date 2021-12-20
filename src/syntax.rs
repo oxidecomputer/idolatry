@@ -26,6 +26,13 @@ pub struct Interface {
     pub ops: IndexMap<String, Operation>,
 }
 
+impl Interface {
+    pub fn from_str(text: &str) -> Result<Self, ron::Error> {
+        let iface: Self = ron::de::from_str(text)?;
+        Ok(iface)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Operation {
     /// Arguments of the operation that are passed by-value in the kernel-copied

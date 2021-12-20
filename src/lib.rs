@@ -40,7 +40,7 @@ mod test {
 
     #[test]
     fn parse_example() {
-        let _iface: super::syntax::Interface =
-            ron::de::from_str(EXAMPLE).expect("example failed to parse");
+        let _iface = super::syntax::Interface::from_str(EXAMPLE)
+            .expect("example failed to parse");
     }
 }
