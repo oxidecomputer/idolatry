@@ -51,6 +51,17 @@ pub fn generate_client_stub(
     writeln!(out)?;
 
     writeln!(out, "impl {} {{", iface.name)?;
+    writeln!(out, r##"
+    #[allow(dead_code)]
+    fn bad_lease_panic() {{
+        // Note: we're not generating a panic message in the client to
+        // save ROM space -- but we give this panic its own stack frame
+        // to indicate from the symbol that the client has erred; if the
+        // user chases the line number into the client stub source file
+        // the error should be clear.
+        panic!();
+    }}"##)?;
+
     for (idx, (name, op)) in iface.ops.iter().enumerate() {
         writeln!(out, "    // operation: {} ({})", name, idx)?;
         if op.idempotent {
@@ -132,10 +143,7 @@ pub fn generate_client_stub(
         for (leasename, lease) in &op.leases {
             if let Some(n) = lease.max_len {
                 writeln!(out, "        if arg_{}.len() > {} {{", leasename, n)?;
-                // Note: we're not generating a panic message in the client to
-                // save ROM space. If the user chases the line number into the
-                // client stub source file the error should be clear.
-                writeln!(out, "            panic!();")?;
+                writeln!(out, "            {}::bad_lease_panic();", iface.name)?;
                 writeln!(out, "        }}")?;
             }
         }
