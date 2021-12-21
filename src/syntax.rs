@@ -27,12 +27,22 @@ pub struct Interface {
 }
 
 impl Interface {
+    /// Converts the canonical text representation of an interface into an
+    /// `Interface`.
+    ///
+    /// The canonical text representation is the Serde representation of
+    /// `Interface` as encoded by RON.
     pub fn from_str(text: &str) -> Result<Self, ron::Error> {
         let iface: Self = ron::de::from_str(text)?;
         Ok(iface)
     }
 }
 
+/// Definition of an operation within an `Interface`.
+///
+/// Each interface has zero or more operations; operations are assigned
+/// distinguishing numbers (discriminators) starting from 1 (for historical
+/// reasons).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Operation {
     /// Arguments of the operation that are passed by-value in the kernel-copied
@@ -60,6 +70,7 @@ pub struct Operation {
     pub idempotent: bool,
 }
 
+/// Description of a lease expected by an operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Lease {
     /// Type being leased.
@@ -88,6 +99,7 @@ pub struct Lease {
     pub max_len: Option<NonZeroU32>,
 }
 
+/// Potential packings of reply types into the Hubris IPC reply format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Reply {
     /// The operation may fail with an error type. This method assumes that
@@ -101,10 +113,24 @@ pub enum Reply {
     },
 }
 
+/// A type that can also have common attributes applied.
+///
+/// `AttributedTy` appears in both argument and reply type positions in the
+/// interface syntax tree. Its `Deserialize` impl is fancy and allows it to be
+/// written either as
+///
+/// - A raw type name, e.g. `"u8"`, or
+/// - A struct with attributes added, e.g. `(type: "u8", foo: bar)`.
+///
+/// If it's written as a raw type name, the attributes (other fields in this
+/// struct) are all defaulted.
 #[derive(Debug, Clone, Serialize)]
 pub struct AttributedTy {
+    /// Name of type.
     #[serde(rename = "type")]
     pub ty: Ty,
+    /// How to unpack this type when it is received from another task, either as
+    /// an incoming argument, or as a reply.
     #[serde(default)]
     pub recv: RecvStrategy,
 }
@@ -114,6 +140,8 @@ impl AttributedTy {
         &self.ty.0
     }
 
+    /// Returns the Rust type that should be used to represent this in the
+    /// internal args/reply structs.
     pub fn repr_ty(&self) -> &Ty {
         match &self.recv {
             RecvStrategy::From(t, _) | RecvStrategy::FromPrimitive(t) => t,
@@ -122,6 +150,7 @@ impl AttributedTy {
     }
 }
 
+/// Visitor for the `Deserialize` impl of `AttributedTy`.
 #[derive(Default)]
 struct AttributedTyVisitor;
 
@@ -180,18 +209,23 @@ impl<'de> Deserialize<'de> for AttributedTy {
     }
 }
 
-
+/// A type name.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Ty(pub String);
 
 impl Ty {
+    /// Checks whether the type name looks like it might be unsized.
+    ///
+    /// We use this to choose lease validation strategies.
     pub fn appears_unsized(&self) -> bool {
         // This is a hack. Need to work out a better way to determine this.
         self.0.starts_with('[') && self.0.ends_with(']')
     }
 }
 
+/// Enumerates different ways that an error type might be passed through the
+/// REPLY syscall.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Error {
     /// The error type should be created from the (non-zero) return code only.
@@ -202,10 +236,24 @@ pub enum Error {
     CLike(Ty),
 }
 
+/// Enumerates different ways that a type might be unpacked when received over
+/// an IPC interface from another task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RecvStrategy {
+    /// The received bytes should be directly reinterpreted as the type using
+    /// `zerocopy::FromBytes`.
     FromBytes,
+    /// The received bytes should be the named type, which will then be
+    /// converted into the target type using `num_traits::FromPrimitive` (which
+    /// is also re-exported by Hubris `userlib`).
     FromPrimitive(Ty),
+    /// The received bytes should be the named type, which will then be
+    /// converted into the target type.
+    ///
+    /// If the second field is `None`, it specifies conversion by `From`.
+    ///
+    /// If the second field is `Some(fn_name)`, it specifies conversion by
+    /// `fn_name`.
     From(Ty, #[serde(default)] Option<String>),
 }
 
