@@ -157,16 +157,23 @@ struct AttributedTyVisitor;
 impl<'de> serde::de::Visitor<'de> for AttributedTyVisitor {
     type Value = AttributedTy;
 
-    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+    fn expecting(
+        &self,
+        formatter: &mut std::fmt::Formatter,
+    ) -> std::fmt::Result {
         formatter.write_str("type name or attributed type struct")
     }
 
     fn visit_map<A>(self, mut access: A) -> Result<Self::Value, A::Error>
-        where A: serde::de::MapAccess<'de>,
+    where
+        A: serde::de::MapAccess<'de>,
     {
         #[derive(Deserialize)]
         #[serde(field_identifier, rename_all = "lowercase")]
-        enum Field { Type, Recv }
+        enum Field {
+            Type,
+            Recv,
+        }
 
         let mut ty = None;
         let mut recv = None;
@@ -192,7 +199,8 @@ impl<'de> serde::de::Visitor<'de> for AttributedTyVisitor {
     }
 
     fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-        where E: serde::de::Error
+    where
+        E: serde::de::Error,
     {
         Ok(AttributedTy {
             ty: Ty(v.to_string()),
@@ -203,7 +211,8 @@ impl<'de> serde::de::Visitor<'de> for AttributedTyVisitor {
 
 impl<'de> Deserialize<'de> for AttributedTy {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where D: serde::de::Deserializer<'de>,
+    where
+        D: serde::de::Deserializer<'de>,
     {
         deserializer.deserialize_any(AttributedTyVisitor::default())
     }

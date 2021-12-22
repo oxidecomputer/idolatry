@@ -222,7 +222,11 @@ pub fn generate_client_stub(
                 writeln!(out, "            }}")?;
                 writeln!(out, "            let lv = zerocopy::LayoutVerified::<_, {}>::new_unaligned(&reply[..])", reply_ty)?;
                 writeln!(out, "                .unwrap();")?;
-                writeln!(out, "            let v: {} = lv.value;", ok.repr_ty().0)?;
+                writeln!(
+                    out,
+                    "            let v: {} = lv.value;",
+                    ok.repr_ty().0
+                )?;
                 match &ok.recv {
                     syntax::RecvStrategy::FromBytes => {
                         writeln!(out, "            Ok(v)")?;
