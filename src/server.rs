@@ -94,7 +94,8 @@ pub fn generate_server_conversions(
                 syntax::RecvStrategy::FromBytes => {
                     writeln!(out, "    pub {}: {},", argname, arg.ty.0)?;
                 }
-                syntax::RecvStrategy::FromPrimitive(ty) | syntax::RecvStrategy::From(ty, _) => {
+                syntax::RecvStrategy::FromPrimitive(ty)
+                | syntax::RecvStrategy::From(ty, _) => {
                     writeln!(out, "    pub raw_{}: {},", argname, ty.0)?;
                     need_args_impl = true;
                 }
@@ -145,13 +146,21 @@ fn generate_server_op_impl(
     iface: &syntax::Interface,
     mut out: impl Write,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    writeln!(out, "impl idol_runtime::ServerOp for {}Operation {{", iface.name)?;
+    writeln!(
+        out,
+        "impl idol_runtime::ServerOp for {}Operation {{",
+        iface.name
+    )?;
 
     writeln!(out, "    fn max_reply_size(&self) -> usize {{")?;
     writeln!(out, "        match self {{")?;
     for opname in iface.ops.keys() {
-        writeln!(out, "            Self::{} => {}_REPLY_SIZE,",
-            opname, opname.to_uppercase())?;
+        writeln!(
+            out,
+            "            Self::{} => {}_REPLY_SIZE,",
+            opname,
+            opname.to_uppercase()
+        )?;
     }
     writeln!(out, "        }}")?;
     writeln!(out, "    }}")?;
@@ -198,7 +207,11 @@ pub fn generate_server_in_order_trait(
                 }
                 writeln!(out, ", {}>, {}>,", lease.ty.0, n)?;
             } else {
-                write!(out, "        {}: idol_runtime::Leased<idol_runtime::", leasename)?;
+                write!(
+                    out,
+                    "        {}: idol_runtime::Leased<idol_runtime::",
+                    leasename
+                )?;
                 if lease.read {
                     write!(out, "R")?;
                 }
@@ -212,7 +225,11 @@ pub fn generate_server_in_order_trait(
 
         match &op.reply {
             syntax::Reply::Result { ok, err } => {
-                write!(out, " -> Result<{}, idol_runtime::RequestError<", ok.display())?;
+                write!(
+                    out,
+                    " -> Result<{}, idol_runtime::RequestError<",
+                    ok.display()
+                )?;
                 match err {
                     syntax::Error::CLike(ty) => {
                         write!(out, "{}", ty.0)?;
@@ -276,8 +293,7 @@ pub fn generate_server_in_order_trait(
                     writeln!(
                         out,
                         "                    {}(args.raw_{}),",
-                        f,
-                        argname
+                        f, argname
                     )?;
                 }
                 syntax::RecvStrategy::FromPrimitive(_) => {
@@ -303,7 +319,10 @@ pub fn generate_server_in_order_trait(
                     // It's ok to unwrap the value in server code because we've
                     // just gotten it _out of_ a NonZeroU32 here, so we know
                     // it'll be statically valid.
-                    format!(", Some(core::num::NonZeroU32::new({}).unwrap())", n)
+                    format!(
+                        ", Some(core::num::NonZeroU32::new({}).unwrap())",
+                        n
+                    )
                 } else {
                     ", None".to_string()
                 };
@@ -336,7 +355,10 @@ pub fn generate_server_in_order_trait(
                     // reply here and then return Ok(()) to avoid invoking the
                     // simple "return an integer" error path.
                     syntax::Error::CLike(_) => {
-                        writeln!(out, "                        Err(val.into())")?;
+                        writeln!(
+                            out,
+                            "                        Err(val.into())"
+                        )?;
                     }
                 }
                 writeln!(out, "                    }}")?;

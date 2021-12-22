@@ -5,10 +5,13 @@
 //! Most uses of Idol don't need to pull this crate in, but generated servers
 //! often do.
 
-use userlib::{FromPrimitive, TaskId, RecvMessage, sys_recv, sys_reply, sys_borrow_read, sys_borrow_write, sys_borrow_info, LeaseAttributes};
 use core::marker::PhantomData;
-use core::ops::Range;
 use core::num::NonZeroU32;
+use core::ops::Range;
+use userlib::{
+    sys_borrow_info, sys_borrow_read, sys_borrow_write, sys_recv, sys_reply,
+    FromPrimitive, LeaseAttributes, RecvMessage, TaskId,
+};
 use zerocopy::{AsBytes, FromBytes};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -48,7 +51,8 @@ impl<E> From<E> for RequestError<E> {
 /// This impl requires that E produce a u16, instead of a u32, to ensure that we
 /// can zero-extend it and not conflict with any of the values of `ClientError`.
 impl<E> From<RequestError<E>> for u32
-    where u16: From<E>,
+where
+    u16: From<E>,
 {
     fn from(e: RequestError<E>) -> Self {
         match e {
@@ -128,11 +132,9 @@ pub trait Server<Op: ServerOp> {
 /// generated trait.
 ///
 /// If you need notifications, use `dispatch_n`.
-pub fn dispatch<S, Op: ServerOp>(
-    buffer: &mut [u8],
-    server: &mut S,
-)
-    where for <'a> (core::marker::PhantomData<Op>, &'a mut S): Server<Op>,
+pub fn dispatch<S, Op: ServerOp>(buffer: &mut [u8], server: &mut S)
+where
+    for<'a> (core::marker::PhantomData<Op>, &'a mut S): Server<Op>,
 {
     let mut server = (core::marker::PhantomData, server);
     let rm = match sys_recv(buffer, 0, server.recv_source()) {
@@ -140,7 +142,7 @@ pub fn dispatch<S, Op: ServerOp>(
         Err(_) => {
             server.closed_recv_fail();
             return;
-        },
+        }
     };
 
     let op = match Op::from_u32(rm.operation) {
@@ -192,8 +194,8 @@ pub fn dispatch<S, Op: ServerOp>(
 pub fn dispatch_n<S: NotificationHandler, Op: ServerOp>(
     buffer: &mut [u8],
     server: &mut S,
-)
-    where for <'a> (core::marker::PhantomData<Op>, &'a mut S): Server<Op>,
+) where
+    for<'a> (core::marker::PhantomData<Op>, &'a mut S): Server<Op>,
 {
     let mut server = (core::marker::PhantomData, server);
     let mask = server.1.current_notification_mask();
@@ -202,7 +204,7 @@ pub fn dispatch_n<S: NotificationHandler, Op: ServerOp>(
         Err(_) => {
             server.closed_recv_fail();
             return;
-        },
+        }
     };
 
     if rm.sender == TaskId::KERNEL {
@@ -391,10 +393,7 @@ impl<T> Leased<R, T> {
     ///
     /// This operation will perform `sys_borrow_info` to check the properties
     /// described in the docs for `Leased`. If any fail, it returns `None`.
-    pub fn read_only(
-        lender: TaskId,
-        index: usize,
-    ) -> Option<Self> {
+    pub fn read_only(lender: TaskId, index: usize) -> Option<Self> {
         Self::check_sized(lender, index, LeaseAttributes::READ)?;
         Some(Self {
             lender,
@@ -417,7 +416,8 @@ impl<T> Leased<R, [T]> {
         index: usize,
         max_len: Option<NonZeroU32>,
     ) -> Option<Self> {
-        let len = Self::check_slice(lender, index, LeaseAttributes::READ, max_len)?;
+        let len =
+            Self::check_slice(lender, index, LeaseAttributes::READ, max_len)?;
         Some(Self {
             lender,
             index,
@@ -435,10 +435,7 @@ impl<T> Leased<W, T> {
     ///
     /// This operation will perform `sys_borrow_info` to check the properties
     /// described in the docs for `Leased`. If any fail, it returns `None`.
-    pub fn write_only(
-        lender: TaskId,
-        index: usize,
-    ) -> Option<Self> {
+    pub fn write_only(lender: TaskId, index: usize) -> Option<Self> {
         Self::check_sized(lender, index, LeaseAttributes::WRITE)?;
         Some(Self {
             lender,
@@ -461,7 +458,8 @@ impl<T> Leased<W, [T]> {
         index: usize,
         max_len: Option<NonZeroU32>,
     ) -> Option<Self> {
-        let len = Self::check_slice(lender, index, LeaseAttributes::WRITE, max_len)?;
+        let len =
+            Self::check_slice(lender, index, LeaseAttributes::WRITE, max_len)?;
         Some(Self {
             lender,
             index,
@@ -483,7 +481,8 @@ impl<A: AttributeRead, T: Sized + Copy + FromBytes + AsBytes> Leased<A, T> {
     /// `None` return as aborting the request.
     pub fn read(&self) -> Option<T> {
         let mut temp = T::new_zeroed();
-        let (rc, len) = sys_borrow_read(self.lender, self.index, 0, temp.as_bytes_mut());
+        let (rc, len) =
+            sys_borrow_read(self.lender, self.index, 0, temp.as_bytes_mut());
         if rc != 0 || len != core::mem::size_of::<T>() {
             None
         } else {
@@ -509,9 +508,13 @@ impl<A: AttributeRead, T: Sized + Copy + FromBytes + AsBytes> Leased<A, [T]> {
         assert!(index < self.len);
 
         let mut temp = T::new_zeroed();
-        let offset = core::mem::size_of::<T>()
-            .checked_mul(index)?;
-        let (rc, len) = sys_borrow_read(self.lender, self.index, offset, temp.as_bytes_mut());
+        let offset = core::mem::size_of::<T>().checked_mul(index)?;
+        let (rc, len) = sys_borrow_read(
+            self.lender,
+            self.index,
+            offset,
+            temp.as_bytes_mut(),
+        );
         if rc != 0 || len != core::mem::size_of::<T>() {
             None
         } else {
@@ -529,13 +532,24 @@ impl<A: AttributeRead, T: Sized + Copy + FromBytes + AsBytes> Leased<A, [T]> {
     /// attributes and the time you call `read_range`, this will return `None`.
     /// Otherwise, it returns `Some(value)`. It's therefore safe to treat a
     /// `None` return as aborting the request.
-    pub fn read_range(&self, range: Range<usize>, dest: &mut [T]) -> Result<(), ()> {
+    pub fn read_range(
+        &self,
+        range: Range<usize>,
+        dest: &mut [T],
+    ) -> Result<(), ()> {
         let offset = core::mem::size_of::<T>()
-            .checked_mul(range.start).ok_or(())?;
+            .checked_mul(range.start)
+            .ok_or(())?;
         let expected_len = core::mem::size_of::<T>()
-            .checked_mul(range.end - range.start).ok_or(())?;
+            .checked_mul(range.end - range.start)
+            .ok_or(())?;
 
-        let (rc, len) = sys_borrow_read(self.lender, self.index, offset, dest.as_bytes_mut());
+        let (rc, len) = sys_borrow_read(
+            self.lender,
+            self.index,
+            offset,
+            dest.as_bytes_mut(),
+        );
 
         if rc != 0 || len != expected_len {
             Err(())
@@ -556,7 +570,8 @@ impl<A: AttributeWrite, T: Sized + Copy + AsBytes> Leased<A, T> {
     /// Otherwise, it returns `Ok(())`. It's therefore safe to treat an `Err`
     /// return as aborting the request.
     pub fn write(&self, value: T) -> Result<(), ()> {
-        let (rc, len) = sys_borrow_write(self.lender, self.index, 0, value.as_bytes());
+        let (rc, len) =
+            sys_borrow_write(self.lender, self.index, 0, value.as_bytes());
         if rc != 0 || len != core::mem::size_of::<T>() {
             Err(())
         } else {
@@ -579,9 +594,9 @@ impl<A: AttributeWrite, T: Sized + Copy + AsBytes> Leased<A, [T]> {
     /// Otherwise, it returns `Ok(())`. It's therefore safe to treat an `Err`
     /// return as aborting the request.
     pub fn write_at(&self, index: usize, value: T) -> Result<(), ()> {
-        let offset = core::mem::size_of::<T>()
-            .checked_mul(index).ok_or(())?;
-        let (rc, len) = sys_borrow_write(self.lender, self.index, offset, value.as_bytes());
+        let offset = core::mem::size_of::<T>().checked_mul(index).ok_or(())?;
+        let (rc, len) =
+            sys_borrow_write(self.lender, self.index, offset, value.as_bytes());
         if rc != 0 || len != core::mem::size_of::<T>() {
             Err(())
         } else {
@@ -599,13 +614,20 @@ impl<A: AttributeWrite, T: Sized + Copy + AsBytes> Leased<A, [T]> {
     /// attributes and the time you call `write_range`, this will return
     /// `Err(())`. Otherwise, it returns `Ok(())`. It's therefore safe to treat
     /// an `Err` return as aborting the request.
-    pub fn write_range(&self, range: Range<usize>, src: &[T]) -> Result<(), ()> {
+    pub fn write_range(
+        &self,
+        range: Range<usize>,
+        src: &[T],
+    ) -> Result<(), ()> {
         let offset = core::mem::size_of::<T>()
-            .checked_mul(range.start).ok_or(())?;
+            .checked_mul(range.start)
+            .ok_or(())?;
         let expected_len = core::mem::size_of::<T>()
-            .checked_mul(range.end - range.start).ok_or(())?;
+            .checked_mul(range.end - range.start)
+            .ok_or(())?;
 
-        let (rc, len) = sys_borrow_write(self.lender, self.index, offset, src.as_bytes());
+        let (rc, len) =
+            sys_borrow_write(self.lender, self.index, offset, src.as_bytes());
 
         if rc != 0 || len != expected_len {
             Err(())
@@ -652,7 +674,9 @@ impl<A: Attribute, T, const N: usize> LenLimit<Leased<A, [T]>, N> {
     }
 }
 
-impl<A: Attribute, T, const N: usize> TryFrom<Leased<A, [T]>> for LenLimit<Leased<A, [T]>, N> {
+impl<A: Attribute, T, const N: usize> TryFrom<Leased<A, [T]>>
+    for LenLimit<Leased<A, [T]>, N>
+{
     type Error = ();
 
     fn try_from(x: Leased<A, [T]>) -> Result<Self, Self::Error> {
