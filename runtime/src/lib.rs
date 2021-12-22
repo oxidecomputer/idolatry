@@ -88,6 +88,8 @@ pub trait NotificationHandler {
 pub trait ServerOp: FromPrimitive + Copy {
     /// Size of response buffer required for this message, in bytes.
     fn max_reply_size(&self) -> usize;
+    /// Number of leases required for this operation.
+    fn required_lease_count(&self) -> usize;
 }
 
 /// Trait implemented by things that serve.
@@ -162,6 +164,11 @@ where
 
     let incoming = &buffer[..rm.message_len];
 
+    if rm.lease_count != op.required_lease_count() {
+        sys_reply(rm.sender, ClientError::BadLease as u32, &[]);
+        return;
+    }
+
     match server.handle(op, incoming, &rm) {
         Ok(()) => {
             // stub has taken care of it.
@@ -224,6 +231,11 @@ pub fn dispatch_n<S: NotificationHandler, Op: ServerOp>(
 
     if rm.response_capacity < op.max_reply_size() {
         sys_reply(rm.sender, ClientError::BadMessage as u32, &[]);
+        return;
+    }
+
+    if rm.lease_count != op.required_lease_count() {
+        sys_reply(rm.sender, ClientError::BadLease as u32, &[]);
         return;
     }
 
