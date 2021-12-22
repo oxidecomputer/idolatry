@@ -166,6 +166,21 @@ fn generate_server_op_impl(
     writeln!(out, "    }}")?;
     writeln!(out)?;
 
+    writeln!(out, "    fn required_lease_count(&self) -> usize {{")?;
+    writeln!(out, "        match self {{")?;
+    // Note: if we start allowing optional leases this will have to get fancier.
+    for (opname, op) in &iface.ops {
+        writeln!(
+            out,
+            "            Self::{} => {},",
+            opname,
+            op.leases.len(),
+        )?;
+    }
+    writeln!(out, "        }}")?;
+    writeln!(out, "    }}")?;
+    writeln!(out)?;
+
     writeln!(out, "}}")?;
 
     Ok(())
