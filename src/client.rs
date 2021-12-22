@@ -234,7 +234,7 @@ pub fn generate_client_stub(
                         writeln!(out, "            Ok({}(v))", f)?;
                     }
                     syntax::RecvStrategy::FromPrimitive(p) => {
-                        writeln!(out, "            Ok(<{} as userlib::FromPrimitive>::from_{}(v))", ok.ty.0, p.0)?;
+                        writeln!(out, "            Ok(<{} as userlib::FromPrimitive>::from_{}(v).unwrap())", ok.ty.0, p.0)?;
                     }
                 }
                 writeln!(out, "        }} else {{")?;
