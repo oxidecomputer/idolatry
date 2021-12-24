@@ -67,11 +67,16 @@ pub fn generate_server_constants(
         upper_names.push(upper_name);
     }
 
-    writeln!(out, "pub const INCOMING_SIZE: usize = 0")?;
+    writeln!(out, "const fn max_incoming_size() -> usize {{")?;
+    writeln!(out, "    let mut max = 0;")?;
     for un in upper_names {
-        writeln!(out, "    + {}_MSG_SIZE", un)?;
+        writeln!(out, "    if max < {}_MSG_SIZE {{", un)?;
+        writeln!(out, "        max = {}_MSG_SIZE;", un)?;
+        writeln!(out, "    }}")?;
     }
-    writeln!(out, "    ;")?;
+    writeln!(out, "    max")?;
+    writeln!(out, "}}")?;
+    writeln!(out, "pub const INCOMING_SIZE: usize = max_incoming_size();")?;
     Ok(())
 }
 
