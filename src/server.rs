@@ -412,9 +412,9 @@ static _{}_IDOL_DEFINITION: [u8; {}] = ["##,
         text.len()
     )?;
 
-    for i in 0..bytes.len() {
+    for (i, item) in bytes.iter().enumerate() {
         let delim = if i % 10 == 0 { "\n    " } else { " " };
-        write!(out, "{}0x{:02x},", delim, bytes[i])?;
+        write!(out, "{}0x{:02x},", delim, item)?;
     }
 
     writeln!(out, "\n];\n")?;
