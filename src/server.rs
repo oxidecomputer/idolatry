@@ -112,21 +112,18 @@ pub fn generate_server_conversions(
         if need_args_impl {
             writeln!(out, "impl {}_{}_ARGS {{", iface.name, name)?;
             for (argname, arg) in &op.args {
-                match &arg.recv {
-                    syntax::RecvStrategy::FromPrimitive(ty) => {
-                        writeln!(
-                            out,
-                            "    pub fn {}(&self) -> Option<{}> {{",
-                            argname, arg.ty.0
-                        )?;
-                        writeln!(
-                            out,
-                            "        userlib::FromPrimitive::from_{}(self.raw_{})",
-                            ty.0, argname
-                        )?;
-                        writeln!(out, "    }}")?;
-                    }
-                    _ => (),
+                if let syntax::RecvStrategy::FromPrimitive(ty) = &arg.recv {
+                    writeln!(
+                        out,
+                        "    pub fn {}(&self) -> Option<{}> {{",
+                        argname, arg.ty.0
+                    )?;
+                    writeln!(
+                        out,
+                        "        userlib::FromPrimitive::from_{}(self.raw_{})",
+                        ty.0, argname
+                    )?;
+                    writeln!(out, "    }}")?;
                 }
             }
             writeln!(out, "}}")?;
