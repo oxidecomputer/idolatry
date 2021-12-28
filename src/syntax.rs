@@ -196,7 +196,7 @@ impl<'de> serde::de::Visitor<'de> for AttributedTyVisitor {
             }
         }
         let ty = ty.ok_or_else(|| serde::de::Error::missing_field("type"))?;
-        let recv = recv.unwrap_or_else(RecvStrategy::default);
+        let recv = recv.unwrap_or_default();
         Ok(AttributedTy { ty, recv })
     }
 
