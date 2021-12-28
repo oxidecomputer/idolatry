@@ -10,6 +10,7 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
+use std::str::FromStr;
 
 /// Definition of an IPC interface.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,13 +27,14 @@ pub struct Interface {
     pub ops: IndexMap<String, Operation>,
 }
 
-impl Interface {
+impl FromStr for Interface {
     /// Converts the canonical text representation of an interface into an
     /// `Interface`.
     ///
     /// The canonical text representation is the Serde representation of
     /// `Interface` as encoded by RON.
-    pub fn from_str(text: &str) -> Result<Self, ron::Error> {
+    type Err = ron::Error;
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
         let iface: Self = ron::de::from_str(text)?;
         Ok(iface)
     }
