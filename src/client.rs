@@ -142,8 +142,15 @@ pub fn generate_client_stub(
 
         // Define args struct.
         writeln!(out, "        #[allow(non_camel_case_types)]")?;
-        writeln!(out, "        #[derive(zerocopy::AsBytes)]")?;
-        writeln!(out, "        #[repr(C, packed)]")?;
+        match op.encoding {
+            syntax::Encoding::Zerocopy => {
+                writeln!(out, "        #[derive(zerocopy::AsBytes)]")?;
+                writeln!(out, "        #[repr(C, packed)]")?;
+            }
+            syntax::Encoding::Ssmarshal => {
+                writeln!(out, "        #[derive(serde::Serialize)]")?;
+            }
+        }
         writeln!(out, "        struct {}_{}_ARGS {{", iface.name, name)?;
         for (argname, arg) in &op.args {
             writeln!(out, "            {}: {},", argname, arg.ty.0)?;
@@ -155,11 +162,17 @@ pub fn generate_client_stub(
         writeln!(out, "        const REPLY_SIZE: usize = {{")?;
         match &op.reply {
             syntax::Reply::Result { ok, err } => {
-                writeln!(
-                    out,
-                    "            let oksize = core::mem::size_of::<{}>();",
-                    ok.display()
-                )?;
+                match op.encoding {
+                    syntax::Encoding::Zerocopy | syntax::Encoding::Ssmarshal => {
+                        // Both these encodings guarantee that sizeof is big
+                        // enough.
+                        writeln!(
+                            out,
+                            "            let oksize = core::mem::size_of::<{}>();",
+                            ok.display()
+                        )?;
+                    }
+                }
                 match err {
                     syntax::Error::CLike(_ty) => {
                         writeln!(out, "            let errsize = 0;")?;
@@ -183,6 +196,16 @@ pub fn generate_client_stub(
         writeln!(out, "        }};")?;
         writeln!(out)?;
 
+        match op.encoding {
+            syntax::Encoding::Zerocopy => {
+                // No further prep required.
+            }
+            syntax::Encoding::Ssmarshal => {
+                // Serialize the arguments.
+                writeln!(out, "        let mut argsbuf = [0; core::mem::size_of::<{}_{}_ARGS>()];", iface.name, name)?;
+                writeln!(out, "        let arglen = ssmarshal::serialize(&mut argsbuf, &args).unwrap();")?;
+            }
+        }
         // Create reply buffer.
         writeln!(out, "        let mut reply = [0u8; REPLY_SIZE];")?;
         writeln!(out)?;
@@ -192,7 +215,14 @@ pub fn generate_client_stub(
         writeln!(out, "        let (rc, len) = sys_send(")?;
         writeln!(out, "            task,")?;
         writeln!(out, "            {}Operation::{} as u16,", iface.name, name)?;
-        writeln!(out, "            zerocopy::AsBytes::as_bytes(&args),")?;
+        match op.encoding {
+            syntax::Encoding::Zerocopy => {
+                writeln!(out, "            zerocopy::AsBytes::as_bytes(&args),")?;
+            }
+            syntax::Encoding::Ssmarshal => {
+                writeln!(out, "            &argsbuf[..arglen],")?;
+            }
+        }
         writeln!(out, "            &mut reply,")?;
         writeln!(out, "            &[")?;
         for (leasename, lease) in &op.leases {
@@ -213,20 +243,27 @@ pub fn generate_client_stub(
 
         match &op.reply {
             syntax::Reply::Result { ok, err } => {
-                let reply_ty = format!("{}_{}_REPLY", iface.name, name);
                 writeln!(out, "        if rc == 0 {{")?;
-                writeln!(out, "            #[derive(zerocopy::FromBytes, zerocopy::Unaligned)]")?;
-                writeln!(out, "            #[repr(C, packed)]")?;
-                writeln!(out, "            struct {} {{", reply_ty)?;
-                writeln!(out, "                value: {},", ok.repr_ty().0)?;
-                writeln!(out, "            }}")?;
-                writeln!(out, "            let lv = zerocopy::LayoutVerified::<_, {}>::new_unaligned(&reply[..])", reply_ty)?;
-                writeln!(out, "                .unwrap();")?;
-                writeln!(
-                    out,
-                    "            let v: {} = lv.value;",
-                    ok.repr_ty().0
-                )?;
+                match op.encoding {
+                    syntax::Encoding::Zerocopy => {
+                        let reply_ty = format!("{}_{}_REPLY", iface.name, name);
+                        writeln!(out, "            #[derive(zerocopy::FromBytes, zerocopy::Unaligned)]")?;
+                        writeln!(out, "            #[repr(C, packed)]")?;
+                        writeln!(out, "            struct {} {{", reply_ty)?;
+                        writeln!(out, "                value: {},", ok.repr_ty().0)?;
+                        writeln!(out, "            }}")?;
+                        writeln!(out, "            let lv = zerocopy::LayoutVerified::<_, {}>::new_unaligned(&reply[..])", reply_ty)?;
+                        writeln!(out, "                .unwrap();")?;
+                        writeln!(
+                            out,
+                            "            let v: {} = lv.value;",
+                            ok.repr_ty().0
+                        )?;
+                    }
+                    syntax::Encoding::Ssmarshal => {
+                        writeln!(out, "            let (v, _): ({}, _) = ssmarshal::deserialize(&reply[..len]).unwrap();", ok.repr_ty().0)?;
+                    }
+                }
                 match &ok.recv {
                     syntax::RecvStrategy::FromBytes => {
                         writeln!(out, "            Ok(v)")?;
