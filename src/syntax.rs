@@ -68,6 +68,26 @@ pub struct Operation {
     /// by a crash need to be mapped into the result type.
     #[serde(default)]
     pub idempotent: bool,
+
+    /// How to encode arguments and return types. The default is `Zerocopy`.
+    #[serde(default)]
+    pub encoding: Encoding,
+}
+
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+pub enum Encoding {
+    /// Try to pass types by direct memory image where possible. This is
+    /// cheapest but won't work for complex types.
+    Zerocopy,
+    /// Encode types using the `ssmarshal` codec for `serde`. This can transfer
+    /// arbitrarily complex Rust types.
+    Ssmarshal,
+}
+
+impl Default for Encoding {
+    fn default() -> Self {
+        Self::Zerocopy
+    }
 }
 
 /// Description of a lease expected by an operation.

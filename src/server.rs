@@ -50,17 +50,29 @@ pub fn generate_server_constants(
 
         writeln!(out, "pub const {}_MSG_SIZE: usize = 0", upper_name)?;
 
-        for arg in op.args.values() {
-            writeln!(out, "    + core::mem::size_of::<{}>()", arg.ty.0)?;
+        match op.encoding {
+            syntax::Encoding::Zerocopy | syntax::Encoding::Ssmarshal => {
+                // Zerocopy moves fields as a packed struct; Ssmarshal
+                // serializes them, but guarantees that the serialized size will
+                // be no larger than the size of the input types. So this method
+                // works for both.
+                for arg in op.args.values() {
+                    writeln!(out, "    + core::mem::size_of::<{}>()", arg.ty.0)?;
+                }
+            }
         }
         writeln!(out, "    ;")?;
 
         write!(out, "pub const {}_REPLY_SIZE: usize =", upper_name)?;
         match &op.reply {
             syntax::Reply::Result { ok, .. } => {
-                // This strategy only uses bytes for the OK side of the type,
-                // and only sends one type, so:
-                writeln!(out, "core::mem::size_of::<{}>();", ok.display())?;
+                match op.encoding {
+                    syntax::Encoding::Zerocopy | syntax::Encoding::Ssmarshal => {
+                        // This strategy only uses bytes for the OK side of the type,
+                        // and only sends one type, so:
+                        writeln!(out, "core::mem::size_of::<{}>();", ok.display())?;
+                    }
+                }
             }
         }
 
@@ -87,11 +99,21 @@ pub fn generate_server_conversions(
     for (name, op) in &iface.ops {
         // Define args struct.
         writeln!(out, "#[allow(non_camel_case_types)]")?;
-        writeln!(out, "#[repr(C, packed)]")?;
-        writeln!(
-            out,
-            "#[derive(Copy, Clone, zerocopy::FromBytes, zerocopy::Unaligned)]"
-        )?;
+        match op.encoding {
+            syntax::Encoding::Zerocopy => {
+                writeln!(out, "#[repr(C, packed)]")?;
+                writeln!(
+                    out,
+                    "#[derive(Copy, Clone, zerocopy::FromBytes, zerocopy::Unaligned)]"
+                )?;
+            }
+            syntax::Encoding::Ssmarshal => {
+                writeln!(
+                    out,
+                    "#[derive(Copy, Clone, serde::Deserialize)]"
+                )?;
+            }
+        }
         writeln!(out, "pub struct {}_{}_ARGS {{", iface.name, name)?;
         let mut need_args_impl = false;
         for (argname, arg) in &op.args {
@@ -132,22 +154,33 @@ pub fn generate_server_conversions(
             writeln!(out, "}}")?;
         }
 
-        writeln!(out, "pub fn read_{}_msg(bytes: &[u8])", name)?;
-        writeln!(out, "    -> Option<&{}_{}_ARGS>", iface.name, name)?;
-        writeln!(out, "{{")?;
-        writeln!(
-            out,
-            "    Some(zerocopy::LayoutVerified::<_, {}_{}_ARGS>::new_unaligned(bytes)?",
-            iface.name, name
-        )?;
-        writeln!(out, "        .into_ref())")?;
-        writeln!(out, "}}")?;
+        match op.encoding {
+            syntax::Encoding::Zerocopy => {
+                writeln!(out, "pub fn read_{}_msg(bytes: &[u8])", name)?;
+                writeln!(out, "    -> Option<&{}_{}_ARGS>", iface.name, name)?;
+                writeln!(out, "{{")?;
+                writeln!(
+                    out,
+                    "    Some(zerocopy::LayoutVerified::<_, {}_{}_ARGS>::new_unaligned(bytes)?",
+                    iface.name, name
+                )?;
+                writeln!(out, "        .into_ref())")?;
+                writeln!(out, "}}")?;
+            }
+            syntax::Encoding::Ssmarshal => {
+                writeln!(out, "pub fn read_{}_msg(bytes: &[u8])", name)?;
+                writeln!(out, "    -> Option<{}_{}_ARGS>", iface.name, name)?;
+                writeln!(out, "{{")?;
+                writeln!(out, "    ssmarshal::deserialize(bytes).ok().map(|(x, _)| x)")?;
+                writeln!(out, "}}")?;
+            }
+        }
     }
 
     Ok(())
 }
 
-fn generate_server_op_impl(
+pub fn generate_server_op_impl(
     iface: &syntax::Interface,
     mut out: impl Write,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -366,7 +399,17 @@ pub fn generate_server_in_order_trait(
             syntax::Reply::Result { err, .. } => {
                 writeln!(out, "                match r {{")?;
                 writeln!(out, "                    Ok(val) => {{")?;
-                writeln!(out, "                        userlib::sys_reply(rm.sender, 0, zerocopy::AsBytes::as_bytes(&val));")?;
+                match op.encoding {
+                    syntax::Encoding::Zerocopy => {
+                        writeln!(out, "                        userlib::sys_reply(rm.sender, 0, zerocopy::AsBytes::as_bytes(&val));")?;
+                    }
+                    syntax::Encoding::Ssmarshal => {
+                        writeln!(out, "                        let mut reply_buf = [0u8; {}_REPLY_SIZE];",
+                            opname.to_uppercase())?;
+                        writeln!(out, "                        let n_reply = ssmarshal::serialize(&mut reply_buf, &val).unwrap();")?;
+                        writeln!(out, "                        userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);")?;
+                    }
+                }
                 writeln!(out, "                        Ok(())")?;
                 writeln!(out, "                    }}")?;
                 writeln!(out, "                    Err(val) => {{")?;
