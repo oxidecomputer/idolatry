@@ -406,7 +406,7 @@ pub fn generate_server_in_order_trait(
                     syntax::Encoding::Ssmarshal => {
                         writeln!(out, "                        let mut reply_buf = [0u8; {}_REPLY_SIZE];",
                             opname.to_uppercase())?;
-                        writeln!(out, "                        let n_reply = ssmarshal::serialize(&mut reply_buf, &val).unwrap();")?;
+                        writeln!(out, "                        let n_reply = ssmarshal::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap();")?;
                         writeln!(out, "                        userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);")?;
                     }
                 }
