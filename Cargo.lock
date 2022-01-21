@@ -5,12 +5,12 @@ version = 3
 [[package]]
 name = "abi"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/hubris#528013a31ea947e59e3f9773ef032fa0a0e4956b"
+source = "git+https://github.com/oxidecomputer/hubris#f8851cf677c4710ada599ea176c5e055b6ff6abe"
 dependencies = [
  "bitflags",
  "byteorder",
  "serde",
- "zerocopy 0.3.0",
+ "zerocopy",
 ]
 
 [[package]]
@@ -57,7 +57,7 @@ checksum = "ab5ef0d4909ef3724cc8cce6ccc8572c5c817592e9285f5464f8e86f8bd3726e"
 
 [[package]]
 name = "idol"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "indexmap",
  "quote",
@@ -71,7 +71,7 @@ name = "idol-runtime"
 version = "0.1.0"
 dependencies = [
  "userlib",
- "zerocopy 0.6.1",
+ "zerocopy",
 ]
 
 [[package]]
@@ -211,7 +211,7 @@ checksum = "8ccb82d61f80a663efe1f787a51b16b5a51e3314d6ac365b08639f52387b33f3"
 [[package]]
 name = "userlib"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/hubris#528013a31ea947e59e3f9773ef032fa0a0e4956b"
+source = "git+https://github.com/oxidecomputer/hubris#f8851cf677c4710ada599ea176c5e055b6ff6abe"
 dependencies = [
  "abi",
  "bstringify",
@@ -220,17 +220,7 @@ dependencies = [
  "paste",
  "serde",
  "ssmarshal",
- "zerocopy 0.3.0",
-]
-
-[[package]]
-name = "zerocopy"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6580539ad917b7c026220c4b3f2c08d52ce54d6ce0dc491e66002e35388fab46"
-dependencies = [
- "byteorder",
- "zerocopy-derive 0.2.0",
+ "zerocopy",
 ]
 
 [[package]]
@@ -240,18 +230,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "332f188cc1bcf1fe1064b8c58d150f497e697f49774aa846f2dc949d9a25f236"
 dependencies = [
  "byteorder",
- "zerocopy-derive 0.3.1",
-]
-
-[[package]]
-name = "zerocopy-derive"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d498dbd1fd7beb83c86709ae1c33ca50942889473473d287d56ce4770a18edfb"
-dependencies = [
- "proc-macro2",
- "syn",
- "synstructure",
+ "zerocopy-derive",
 ]
 
 [[package]]

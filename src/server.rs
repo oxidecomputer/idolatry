@@ -74,6 +74,13 @@ pub fn generate_server_constants(
                     }
                 }
             }
+            syntax::Reply::Simple(t) => {
+                match op.encoding {
+                    syntax::Encoding::Zerocopy | syntax::Encoding::Ssmarshal => {
+                        writeln!(out, "core::mem::size_of::<{}>();", t.display())?;
+                    }
+                }
+            }
         }
 
         upper_names.push(upper_name);
@@ -290,6 +297,13 @@ pub fn generate_server_in_order_trait(
                 }
                 write!(out, ">>")?;
             }
+            syntax::Reply::Simple(t) => {
+                write!(
+                    out,
+                    " -> {}",
+                    t.display()
+                )?;
+            }
         }
         writeln!(out, ";")?;
         writeln!(out)?;
@@ -315,7 +329,7 @@ pub fn generate_server_in_order_trait(
     writeln!(out, "        op: {}Operation,", iface.name)?;
     writeln!(out, "        incoming: &[u8],")?;
     writeln!(out, "        rm: &userlib::RecvMessage,")?;
-    writeln!(out, "    ) -> Result<(), u32> {{")?;
+    writeln!(out, "    ) -> Result<(), idol_runtime::RequestError<u16>> {{")?;
     writeln!(out, "        #[allow(unused_imports)]")?;
     writeln!(out, "        use core::convert::TryInto;")?;
     writeln!(out, "        use idol_runtime::ClientError;")?;
@@ -324,7 +338,7 @@ pub fn generate_server_in_order_trait(
         writeln!(out, "            {}Operation::{} => {{", iface.name, opname)?;
         writeln!(
             out,
-            "                let {}args = read_{}_msg(incoming).ok_or(ClientError::BadMessage)?;",
+            "                let {}args = read_{}_msg(incoming).ok_or(ClientError::BadMessageContents.fail())?;",
             if op.args.is_empty() { "_" } else { "" },
             opname
         )?;
@@ -352,7 +366,7 @@ pub fn generate_server_in_order_trait(
                 syntax::RecvStrategy::FromPrimitive(_) => {
                     writeln!(
                         out,
-                        "                    args.{}().ok_or(ClientError::BadMessage)?,",
+                        "                    args.{}().ok_or(ClientError::BadMessageContents.fail())?,",
                         argname
                     )?;
                 }
@@ -388,7 +402,7 @@ pub fn generate_server_in_order_trait(
                 ("", "".to_string())
             };
 
-            write!(out, "                    idol_runtime::Leased::{}{}(rm.sender, {}{}).ok_or(ClientError::BadLease)?", fun, suffix, i, limit)?;
+            write!(out, "                    idol_runtime::Leased::{}{}(rm.sender, {}{}).ok_or(ClientError::BadLease.fail())?", fun, suffix, i, limit)?;
             if lease.max_len.is_some() {
                 write!(out, ".try_into().unwrap()")?;
             }
@@ -396,6 +410,31 @@ pub fn generate_server_in_order_trait(
         }
         writeln!(out, "                );")?;
         match &op.reply {
+            syntax::Reply::Simple(_t) => {
+                writeln!(out, "                match r {{")?;
+                writeln!(out, "                    Ok(val) => {{")?;
+                match op.encoding {
+                    syntax::Encoding::Zerocopy => {
+                        writeln!(out, "                        userlib::sys_reply(rm.sender, 0, zerocopy::AsBytes::as_bytes(&val));")?;
+                    }
+                    syntax::Encoding::Ssmarshal => {
+                        writeln!(out, "                        let mut reply_buf = [0u8; {}_REPLY_SIZE];",
+                            opname.to_uppercase())?;
+                        writeln!(out, "                        let n_reply = ssmarshal::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap();")?;
+                        writeln!(out, "                        userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);")?;
+                    }
+                }
+                writeln!(out, "                        Ok(())")?;
+                writeln!(out, "                    }}")?;
+                writeln!(out, "                    Err(val) => {{")?;
+                // Simple returns can only return ClientError.
+                writeln!(
+                    out,
+                    "                        Err(val.into())"
+                )?;
+                writeln!(out, "                    }}")?;
+                writeln!(out, "                }}")?;
+            }
             syntax::Reply::Result { err, .. } => {
                 writeln!(out, "                match r {{")?;
                 writeln!(out, "                    Ok(val) => {{")?;
@@ -420,7 +459,7 @@ pub fn generate_server_in_order_trait(
                     syntax::Error::CLike(_) => {
                         writeln!(
                             out,
-                            "                        Err(val.into())"
+                            "                        Err(val.map_runtime(u16::from))"
                         )?;
                     }
                 }

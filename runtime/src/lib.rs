@@ -10,7 +10,8 @@ use core::num::NonZeroU32;
 use core::ops::Range;
 use userlib::{
     sys_borrow_info, sys_borrow_read, sys_borrow_write, sys_recv, sys_reply,
-    FromPrimitive, LeaseAttributes, RecvMessage, TaskId,
+    sys_reply_fault, FromPrimitive, LeaseAttributes, RecvMessage,
+    ReplyFaultReason, TaskId,
 };
 use zerocopy::{AsBytes, FromBytes};
 
@@ -18,9 +19,33 @@ use zerocopy::{AsBytes, FromBytes};
 #[repr(u32)]
 pub enum ClientError {
     UnknownOperation = 0xFFFF_FE00,
-    BadMessage = 0xFFFF_FE01,
+    BadMessageSize = 0xFFFF_FE01,
+    BadMessageContents = 0xFFFF_FE04,
     BadLease = 0xFFFF_FE02,
+    ReplyBufferTooSmall = 0xFFFF_FE05,
+
+    /// no parallel
     WentAway = 0xFFFF_FE03,
+}
+
+impl ClientError {
+    pub fn into_fault(self) -> Option<ReplyFaultReason> {
+        match self {
+            Self::UnknownOperation => Some(ReplyFaultReason::UndefinedOperation),
+            Self::BadMessageSize => Some(ReplyFaultReason::BadMessageSize),
+            Self::BadMessageContents => Some(ReplyFaultReason::BadMessageContents),
+            Self::BadLease => Some(ReplyFaultReason::BadLeases),
+            Self::ReplyBufferTooSmall => Some(ReplyFaultReason::ReplyBufferTooSmall),
+
+            // Don't fault clients that just got restarted. (Wouldn't work
+            // anyway.)
+            Self::WentAway => None,
+        }
+    }
+
+    pub fn fail<E>(self) -> RequestError<E> {
+        RequestError::Fail(self)
+    }
 }
 
 impl From<ClientError> for u32 {
@@ -39,6 +64,13 @@ pub enum RequestError<E> {
 impl<E> RequestError<E> {
     pub fn went_away() -> Self {
         Self::Fail(ClientError::WentAway)
+    }
+
+    pub fn map_runtime<T>(self, mut cvt: impl FnMut(E) -> T) -> RequestError<T> {
+        match self {
+            Self::Runtime(e) => RequestError::Runtime(cvt(e)),
+            Self::Fail(e) => RequestError::Fail(e),
+        }
     }
 }
 
@@ -116,7 +148,7 @@ pub trait Server<Op: ServerOp> {
         op: Op,
         incoming: &[u8],
         rm: &RecvMessage,
-    ) -> Result<(), u32>;
+    ) -> Result<(), RequestError<u16>>;
 }
 
 /// Generic server dispatch routine for cases where notifications are not
@@ -150,22 +182,24 @@ where
     let op = match Op::from_u32(rm.operation) {
         Some(op) => op,
         None => {
-            sys_reply(rm.sender, ClientError::UnknownOperation as u32, &[]);
+            sys_reply_fault(rm.sender, ReplyFaultReason::UndefinedOperation);
             return;
         }
     };
 
-    let incoming_truncated = rm.message_len > buffer.len();
-    let reply_would_truncate = rm.response_capacity < op.max_reply_size();
-    if incoming_truncated || reply_would_truncate {
-        sys_reply(rm.sender, ClientError::BadMessage as u32, &[]);
+    if rm.message_len > buffer.len() {
+        sys_reply_fault(rm.sender, ReplyFaultReason::BadMessageSize);
+        return;
+    }
+    if rm.response_capacity < op.max_reply_size() {
+        sys_reply_fault(rm.sender, ReplyFaultReason::ReplyBufferTooSmall);
         return;
     }
 
     let incoming = &buffer[..rm.message_len];
 
     if rm.lease_count != op.required_lease_count() {
-        sys_reply(rm.sender, ClientError::BadLease as u32, &[]);
+        sys_reply_fault(rm.sender, ReplyFaultReason::BadLeases);
         return;
     }
 
@@ -173,10 +207,17 @@ where
         Ok(()) => {
             // stub has taken care of it.
         }
-        Err(code) => {
+        Err(RequestError::Runtime(code)) => {
             // stub has used the convenience return for data-less errors,
             // we'll do the reply.
-            sys_reply(rm.sender, code, &[]);
+            sys_reply(rm.sender, code as u32, &[]);
+        }
+        Err(RequestError::Fail(code)) => {
+            if let Some(reason) = code.into_fault() {
+                sys_reply_fault(rm.sender, reason);
+            } else {
+                // Cases like WentAway do not merit a reply.
+            }
         }
     }
 }
@@ -224,18 +265,17 @@ pub fn dispatch_n<S: NotificationHandler, Op: ServerOp>(
     let op = match Op::from_u32(rm.operation) {
         Some(op) => op,
         None => {
-            sys_reply(rm.sender, ClientError::UnknownOperation as u32, &[]);
+            sys_reply_fault(rm.sender, ReplyFaultReason::UndefinedOperation);
             return;
         }
     };
 
-    if rm.response_capacity < op.max_reply_size() {
-        sys_reply(rm.sender, ClientError::BadMessage as u32, &[]);
+    if rm.message_len > buffer.len() {
+        sys_reply_fault(rm.sender, ReplyFaultReason::BadMessageSize);
         return;
     }
-
-    if rm.lease_count != op.required_lease_count() {
-        sys_reply(rm.sender, ClientError::BadLease as u32, &[]);
+    if rm.response_capacity < op.max_reply_size() {
+        sys_reply_fault(rm.sender, ReplyFaultReason::ReplyBufferTooSmall);
         return;
     }
 
@@ -243,10 +283,17 @@ pub fn dispatch_n<S: NotificationHandler, Op: ServerOp>(
         Ok(()) => {
             // stub has taken care of it.
         }
-        Err(code) => {
+        Err(RequestError::Runtime(code)) => {
             // stub has used the convenience return for data-less errors,
             // we'll do the reply.
-            sys_reply(rm.sender, code, &[]);
+            sys_reply(rm.sender, code as u32, &[]);
+        }
+        Err(RequestError::Fail(code)) => {
+            if let Some(reason) = code.into_fault() {
+                sys_reply_fault(rm.sender, reason);
+            } else {
+                // Cases like WentAway do not merit a reply.
+            }
         }
     }
 }

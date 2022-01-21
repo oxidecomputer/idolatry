@@ -122,6 +122,9 @@ pub struct Lease {
 /// Potential packings of reply types into the Hubris IPC reply format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Reply {
+    /// The operation can't fail, or can only fail through reply-fault, and
+    /// always returns this type:
+    Simple(AttributedTy),
     /// The operation may fail with an error type. This method assumes that
     /// success is indicated by rc=0, and all other values are errors.
     Result {

@@ -77,6 +77,9 @@ pub fn generate_client_stub(
             // A non-idempotent operation had better have an error type.
             match &op.reply {
                 syntax::Reply::Result { .. } => (),
+                syntax::Reply::Simple(_) => {
+                    return Err("operation can't indicate server death".into());
+                }
             }
         }
 
@@ -105,6 +108,9 @@ pub fn generate_client_stub(
                     }
                 }
                 write!(out, ">")?;
+            }
+            syntax::Reply::Simple(t) => {
+                write!(out, " -> {}", t.display())?;
             }
         }
         writeln!(out, " {{")?;
@@ -161,6 +167,19 @@ pub fn generate_client_stub(
         // Determine required size of reply buffer.
         writeln!(out, "        const REPLY_SIZE: usize = {{")?;
         match &op.reply {
+            syntax::Reply::Simple(t) => {
+                match op.encoding {
+                    syntax::Encoding::Zerocopy | syntax::Encoding::Ssmarshal => {
+                        // Both these encodings guarantee that sizeof is big
+                        // enough.
+                        writeln!(
+                            out,
+                            "            core::mem::size_of::<{}>()",
+                            t.display()
+                        )?;
+                    }
+                }
+            }
             syntax::Reply::Result { ok, err } => {
                 match op.encoding {
                     syntax::Encoding::Zerocopy | syntax::Encoding::Ssmarshal => {
@@ -242,6 +261,45 @@ pub fn generate_client_stub(
         writeln!(out, "        );")?;
 
         match &op.reply {
+            syntax::Reply::Simple(t) => {
+                //writeln!(out, "        if rc != 0 {{ panic!(); }}")?;
+                writeln!(out, "        let _rc = rc;")?;
+                writeln!(out, "        let _len = len;")?;
+                match op.encoding {
+                    syntax::Encoding::Zerocopy => {
+                        let reply_ty = format!("{}_{}_REPLY", iface.name, name);
+                        writeln!(out, "        #[derive(zerocopy::FromBytes, zerocopy::Unaligned)]")?;
+                        writeln!(out, "        #[repr(C, packed)]")?;
+                        writeln!(out, "        struct {} {{", reply_ty)?;
+                        writeln!(out, "            value: {},", t.repr_ty().0)?;
+                        writeln!(out, "        }}")?;
+                        writeln!(out, "        let lv = zerocopy::LayoutVerified::<_, {}>::new_unaligned(&reply[..])", reply_ty)?;
+                        writeln!(out, "            .unwrap();")?;
+                        writeln!(
+                            out,
+                            "        let v: {} = lv.value;",
+                            t.repr_ty().0
+                        )?;
+                    }
+                    syntax::Encoding::Ssmarshal => {
+                        writeln!(out, "        let (v, _): ({}, _) = ssmarshal::deserialize(&reply[..len]).unwrap();", t.repr_ty().0)?;
+                    }
+                }
+                match &t.recv {
+                    syntax::RecvStrategy::FromBytes => {
+                        writeln!(out, "        v")?;
+                    }
+                    syntax::RecvStrategy::From(_, None) => {
+                        writeln!(out, "        v.into()")?;
+                    }
+                    syntax::RecvStrategy::From(_, Some(f)) => {
+                        writeln!(out, "        {}(v)", f)?;
+                    }
+                    syntax::RecvStrategy::FromPrimitive(p) => {
+                        writeln!(out, "        <{} as userlib::FromPrimitive>::from_{}(v).unwrap()", t.ty.0, p.0)?;
+                    }
+                }
+            }
             syntax::Reply::Result { ok, err } => {
                 writeln!(out, "        if rc == 0 {{")?;
                 match op.encoding {
