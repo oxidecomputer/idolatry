@@ -705,6 +705,15 @@ impl<A: AttributeWrite, T: Sized + Copy + AsBytes> Leased<A, [T]> {
 /// type `T` are available. That is, you can generally treat it like a `Leased`.
 pub struct LenLimit<T, const N: usize>(T);
 
+impl<T, const N: usize> LenLimit<T, N> {
+    /// Unwraps the `LenLimit` decorator. This is useful when you want to ensure
+    /// that something passed to you is limited-length, but you then need it
+    /// in its raw form now that you're confident.
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+}
+
 impl<A: Attribute, T, const N: usize> LenLimit<Leased<A, [T]>, N> {
     /// Gets the length of the slice as a `u16` if it has been previously
     /// checked to be 65535 elements or less.
@@ -760,3 +769,133 @@ impl<T, const N: usize> core::ops::DerefMut for LenLimit<T, N> {
         &mut self.0
     }
 }
+
+pub struct LeaseBufReader<A: AttributeRead, const N: usize> {
+    /// Backing lease.
+    lease: Leased<A, [u8]>,
+    /// How far we've read in the lease.
+    pos: usize,
+    /// Number of bytes we've read that are still sitting in `buf` waiting to be
+    /// observed.
+    buf_left: usize,
+    /// Pending bytes. Specifically, the _tail_ of `buf` containing `buf_left`
+    /// bytes is valid.
+    buf: [u8; N],
+}
+
+impl<A: AttributeRead, const N: usize> From<Leased<A, [u8]>> for LeaseBufReader<A, N> {
+    fn from(lease: Leased<A, [u8]>) -> Self {
+        Self {
+            lease,
+            pos: 0,
+            buf_left: 0,
+            buf: [0; N],
+        }
+    }
+}
+
+impl<A: AttributeRead, const N: usize> LeaseBufReader<A, N> {
+    pub fn is_eof(&self) -> bool {
+        self.pos == self.lease.len() && self.buf_left == 0
+    }
+
+    pub fn refill(&mut self) -> Result<(), ()> {
+        if self.buf_left == 0 {
+            if self.pos == self.lease.len() {
+                // We've hit the end.
+                return Err(());
+            }
+
+            let end = self.lease.len().max(self.pos + N);
+            let chunk_size = end - self.pos;
+            // Try to fill our buffer. If this fails, it means the client went
+            // away, so we'll report EOF.
+            self.lease.read_range(
+                self.pos..end,
+                &mut self.buf[N - chunk_size..],
+            )?;
+            // Reset buffer state:
+            self.pos += chunk_size;
+            self.buf_left = chunk_size;
+        }
+        Ok(())
+    }
+
+    pub fn read(&mut self) -> Option<u8> {
+        // Refill buffer if required (and possible).
+        self.refill().ok()?;
+        let byte = self.buf[N - self.buf_left];
+        self.buf_left -= 1;
+        Some(byte)
+    }
+}
+
+pub struct LeaseBufWriter<A: AttributeWrite, const N: usize> {
+    /// Backing lease.
+    lease: Leased<A, [u8]>,
+    /// How far we've written in the lease.
+    pos: usize,
+    /// Number of bytes we've "written" that are still sitting in `buf` waiting
+    /// to be flushed.
+    ///
+    /// This has the range `0..N` -- if it would reach `N`, we flush and reset
+    /// it.
+    buf_valid: usize,
+    /// Pending bytes. Specifically, the _prefix_ of `buf` containing
+    /// `buf_valid` bytes is valid.
+    buf: [u8; N],
+}
+
+impl<A: AttributeWrite, const N: usize> From<Leased<A, [u8]>> for LeaseBufWriter<A, N> {
+    fn from(lease: Leased<A, [u8]>) -> Self {
+        Self {
+            lease,
+            pos: 0,
+            buf_valid: 0,
+            buf: [0; N],
+        }
+    }
+}
+
+impl<A: AttributeWrite, const N: usize> LeaseBufWriter<A, N> {
+    pub fn is_eof(&self) -> bool {
+        self.pos + self.buf_valid == self.lease.len()
+    }
+
+    pub fn write(&mut self, byte: u8) -> Result<(), ()> {
+        if self.is_eof() {
+            return Err(());
+        }
+        self.buf[self.buf_valid] = byte;
+        self.buf_valid += 1;
+
+        if self.buf_valid == N || self.is_eof() {
+            self.flush()?;
+        }
+
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), ()> {
+        // Try to flush. If this fails, the client has gone away, so we fail
+        // too. However, we zero `buf_valid` either way to maintain our
+        // invariant on that field. Since client errors never recover, losing
+        // data here is unavoidable.
+        let n = self.buf_valid;
+        self.buf_valid = 0;
+        if n != 0 {
+            self.lease.write_range(self.pos..self.pos + n, &self.buf[..n])?;
+            self.pos += n;
+        }
+        Ok(())
+    }
+}
+
+impl<A: AttributeWrite, const N: usize> Drop for LeaseBufWriter<A, N> {
+    fn drop(&mut self) {
+        // Ignore flush errors on drop since it means the client went away at
+        // the last minute.
+        self.flush().ok();
+    }
+}
+
