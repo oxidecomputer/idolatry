@@ -806,7 +806,7 @@ impl<A: AttributeRead, const N: usize> LeaseBufReader<A, N> {
                 return Err(());
             }
 
-            let end = self.lease.len().max(self.pos + N);
+            let end = self.lease.len().min(self.pos + N);
             let chunk_size = end - self.pos;
             // Try to fill our buffer. If this fails, it means the client went
             // away, so we'll report EOF.
