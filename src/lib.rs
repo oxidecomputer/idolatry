@@ -6,6 +6,7 @@ pub mod client;
 pub mod common;
 pub mod server;
 pub mod syntax;
+pub(crate) mod serde_helpers;
 
 #[cfg(test)]
 mod test {
