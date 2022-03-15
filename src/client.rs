@@ -159,7 +159,19 @@ pub fn generate_client_stub(
         }
         writeln!(out, "        struct {}_{}_ARGS {{", iface.name, name)?;
         for (argname, arg) in &op.args {
-            writeln!(out, "            {}: {},", argname, arg.ty.0)?;
+            // Special-case handling of `bool` values when using the Zerocopy
+            // encoding strategy, for efficiency.
+            let ty_str = if matches!(op.encoding, syntax::Encoding::Zerocopy)
+                && arg.ty.0 == "bool"
+            {
+                assert!(arg.ty.0 == "bool");
+                "u8"
+            } else {
+                assert!(arg.ty.0 != "bool");
+                arg.ty.0.as_str()
+            };
+
+            writeln!(out, "            {}: {},", argname, ty_str)?;
         }
         writeln!(out, "        }}")?;
         writeln!(out)?;
@@ -211,8 +223,16 @@ pub fn generate_client_stub(
 
         // Create instance of args struct from args.
         writeln!(out, "        let args = {}_{}_ARGS {{", iface.name, name)?;
-        for argname in op.args.keys() {
-            writeln!(out, "            {0}: arg_{0},", argname)?;
+        for (argname, arg) in &op.args {
+            // Special case: we can send booleans as non-zero u8 while still
+            // using the Zerocopy encoding for efficiency.
+            if matches!(op.encoding, syntax::Encoding::Zerocopy)
+                && matches!(arg.recv, syntax::RecvStrategy::BoolAsU8)
+            {
+                writeln!(out, "            {0}: arg_{0} as u8,", argname)?;
+            } else {
+                writeln!(out, "            {0}: arg_{0},", argname)?;
+            }
         }
         writeln!(out, "        }};")?;
         writeln!(out)?;
@@ -276,18 +296,18 @@ pub fn generate_client_stub(
                         writeln!(out, "        #[derive(zerocopy::FromBytes, zerocopy::Unaligned)]")?;
                         writeln!(out, "        #[repr(C, packed)]")?;
                         writeln!(out, "        struct {} {{", reply_ty)?;
-                        writeln!(out, "            value: {},", t.repr_ty().0)?;
+                        writeln!(out, "            value: {},", t.repr_ty())?;
                         writeln!(out, "        }}")?;
                         writeln!(out, "        let lv = zerocopy::LayoutVerified::<_, {}>::new_unaligned(&reply[..])", reply_ty)?;
                         writeln!(out, "            .unwrap();")?;
                         writeln!(
                             out,
                             "        let v: {} = lv.value;",
-                            t.repr_ty().0
+                            t.repr_ty()
                         )?;
                     }
                     syntax::Encoding::Ssmarshal => {
-                        writeln!(out, "        let (v, _): ({}, _) = ssmarshal::deserialize(&reply[..len]).unwrap();", t.repr_ty().0)?;
+                        writeln!(out, "        let (v, _): ({}, _) = ssmarshal::deserialize(&reply[..len]).unwrap();", t.repr_ty())?;
                     }
                 }
                 match &t.recv {
@@ -303,6 +323,9 @@ pub fn generate_client_stub(
                     syntax::RecvStrategy::FromPrimitive(p) => {
                         writeln!(out, "        <{} as userlib::FromPrimitive>::from_{}(v).unwrap()", t.ty.0, p.0)?;
                     }
+                    syntax::RecvStrategy::BoolAsU8 => {
+                        writeln!(out, "        v != 0")?;
+                    }
                 }
             }
             syntax::Reply::Result { ok, err } => {
@@ -313,18 +336,22 @@ pub fn generate_client_stub(
                         writeln!(out, "            #[derive(zerocopy::FromBytes, zerocopy::Unaligned)]")?;
                         writeln!(out, "            #[repr(C, packed)]")?;
                         writeln!(out, "            struct {} {{", reply_ty)?;
-                        writeln!(out, "                value: {},", ok.repr_ty().0)?;
+                        writeln!(
+                            out,
+                            "                value: {},",
+                            ok.repr_ty()
+                        )?;
                         writeln!(out, "            }}")?;
                         writeln!(out, "            let lv = zerocopy::LayoutVerified::<_, {}>::new_unaligned(&reply[..])", reply_ty)?;
                         writeln!(out, "                .unwrap();")?;
                         writeln!(
                             out,
                             "            let v: {} = lv.value;",
-                            ok.repr_ty().0
+                            ok.repr_ty()
                         )?;
                     }
                     syntax::Encoding::Ssmarshal => {
-                        writeln!(out, "            let (v, _): ({}, _) = ssmarshal::deserialize(&reply[..len]).unwrap();", ok.repr_ty().0)?;
+                        writeln!(out, "            let (v, _): ({}, _) = ssmarshal::deserialize(&reply[..len]).unwrap();", ok.repr_ty())?;
                     }
                 }
                 match &ok.recv {
@@ -339,6 +366,9 @@ pub fn generate_client_stub(
                     }
                     syntax::RecvStrategy::FromPrimitive(p) => {
                         writeln!(out, "            Ok(<{} as userlib::FromPrimitive>::from_{}(v).unwrap())", ok.ty.0, p.0)?;
+                    }
+                    syntax::RecvStrategy::BoolAsU8 => {
+                        writeln!(out, "            Ok(v != 0)")?;
                     }
                 }
                 writeln!(out, "        }} else {{")?;

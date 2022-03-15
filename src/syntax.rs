@@ -165,10 +165,11 @@ impl AttributedTy {
 
     /// Returns the Rust type that should be used to represent this in the
     /// internal args/reply structs.
-    pub fn repr_ty(&self) -> &Ty {
+    pub fn repr_ty(&self) -> &str {
         match &self.recv {
-            RecvStrategy::From(t, _) | RecvStrategy::FromPrimitive(t) => t,
-            RecvStrategy::FromBytes => &self.ty,
+            RecvStrategy::From(t, _) | RecvStrategy::FromPrimitive(t) => &t.0,
+            RecvStrategy::FromBytes => &self.ty.0,
+            RecvStrategy::BoolAsU8 => "u8",
         }
     }
 }
@@ -218,7 +219,7 @@ impl<'de> serde::de::Visitor<'de> for AttributedTyVisitor {
         }
         let ty: Ty =
             ty.ok_or_else(|| serde::de::Error::missing_field("type"))?;
-        let recv = recv.unwrap_or_else(RecvStrategy::default);
+        let recv = recv.unwrap_or_else(|| ty.default_recv_strategy());
         Ok(AttributedTy { ty, recv })
     }
 
@@ -226,10 +227,9 @@ impl<'de> serde::de::Visitor<'de> for AttributedTyVisitor {
     where
         E: serde::de::Error,
     {
-        Ok(AttributedTy {
-            ty: Ty(v.to_string()),
-            recv: RecvStrategy::default(),
-        })
+        let ty = Ty(v.to_string());
+        let recv = ty.default_recv_strategy();
+        Ok(AttributedTy { ty, recv })
     }
 }
 
@@ -254,6 +254,13 @@ impl Ty {
     pub fn appears_unsized(&self) -> bool {
         // This is a hack. Need to work out a better way to determine this.
         self.0.starts_with('[') && self.0.ends_with(']')
+    }
+    /// Returns a default return strategy for the given type
+    pub fn default_recv_strategy(&self) -> RecvStrategy {
+        match self.0.as_str() {
+            "bool" => RecvStrategy::BoolAsU8,
+            _ => RecvStrategy::FromBytes,
+        }
     }
 }
 
@@ -288,10 +295,8 @@ pub enum RecvStrategy {
     /// If the second field is `Some(fn_name)`, it specifies conversion by
     /// `fn_name`.
     From(Ty, #[serde(default)] Option<String>),
-}
-
-impl Default for RecvStrategy {
-    fn default() -> Self {
-        Self::FromBytes
-    }
+    /// The received bytes should be a single `u8` which is mapped to `true`
+    /// if nonzero and `false` otherwise.  This is only used when sending
+    /// `bool` values.
+    BoolAsU8,
 }

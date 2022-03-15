@@ -137,6 +137,17 @@ pub fn generate_server_conversions(
                     writeln!(out, "    pub raw_{}: {},", argname, ty.0)?;
                     need_args_impl = true;
                 }
+                syntax::RecvStrategy::BoolAsU8 => match op.encoding {
+                    // Special-case handling to send bools using a Zerocopy
+                    // encoding strategy, for efficiency.
+                    syntax::Encoding::Zerocopy => {
+                        writeln!(out, "    pub raw_{}: u8,", argname)?;
+                        need_args_impl = true;
+                    }
+                    syntax::Encoding::Ssmarshal => {
+                        writeln!(out, "    pub {}: bool,", argname)?;
+                    }
+                },
             }
         }
         writeln!(out, "}}")?;
@@ -157,6 +168,15 @@ pub fn generate_server_conversions(
                             "        userlib::FromPrimitive::from_{}(self.raw_{})",
                             ty.0, argname
                         )?;
+                        writeln!(out, "    }}")?;
+                    }
+                    syntax::RecvStrategy::BoolAsU8 => {
+                        writeln!(
+                            out,
+                            "    pub fn {}(&self) -> bool {{",
+                            argname
+                        )?;
+                        writeln!(out, "        self.raw_{} != 0", argname)?;
                         writeln!(out, "    }}")?;
                     }
                     _ => (),
@@ -349,6 +369,9 @@ pub fn generate_server_in_order_trait(
             match &arg.recv {
                 syntax::RecvStrategy::FromBytes => {
                     writeln!(out, "                    args.{},", argname)?;
+                }
+                syntax::RecvStrategy::BoolAsU8 => {
+                    writeln!(out, "                    args.{}(),", argname)?;
                 }
                 syntax::RecvStrategy::From(_, None) => {
                     writeln!(
