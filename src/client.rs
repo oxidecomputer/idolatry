@@ -169,7 +169,8 @@ pub fn generate_client_stub(
         match &op.reply {
             syntax::Reply::Simple(t) => {
                 match op.encoding {
-                    syntax::Encoding::Zerocopy | syntax::Encoding::Ssmarshal => {
+                    syntax::Encoding::Zerocopy
+                    | syntax::Encoding::Ssmarshal => {
                         // Both these encodings guarantee that sizeof is big
                         // enough.
                         writeln!(
@@ -182,7 +183,8 @@ pub fn generate_client_stub(
             }
             syntax::Reply::Result { ok, err } => {
                 match op.encoding {
-                    syntax::Encoding::Zerocopy | syntax::Encoding::Ssmarshal => {
+                    syntax::Encoding::Zerocopy
+                    | syntax::Encoding::Ssmarshal => {
                         // Both these encodings guarantee that sizeof is big
                         // enough.
                         writeln!(
@@ -236,7 +238,10 @@ pub fn generate_client_stub(
         writeln!(out, "            {}Operation::{} as u16,", iface.name, name)?;
         match op.encoding {
             syntax::Encoding::Zerocopy => {
-                writeln!(out, "            zerocopy::AsBytes::as_bytes(&args),")?;
+                writeln!(
+                    out,
+                    "            zerocopy::AsBytes::as_bytes(&args),"
+                )?;
             }
             syntax::Encoding::Ssmarshal => {
                 writeln!(out, "            &argsbuf[..arglen],")?;
