@@ -208,7 +208,7 @@ so the alternate `recv` strategies above don't work.
 
 Since `bool` is a common type, they are special-cased in Idol to pack into
 a single `u8`. The value is encoded with `false => 0, true => 1`, and
-decoded with `0 => false, * => true`. APIs which call into Idol functions
+decoded with `0 => false, * => true`. Tools which call into Idol functions
 without using the generated client API (e.g. [Humility](https://github.com/oxidecomputer/humility))
 must also implement this special-case behavior.
 
