@@ -232,7 +232,7 @@ impl<'de> serde::de::Visitor<'de> for AttributedTyVisitor {
     {
         Ok(AttributedTy {
             ty: Ty(v.to_string()),
-            recv: Default::default(),
+            recv: RecvStrategy::default(),
         })
     }
 }
