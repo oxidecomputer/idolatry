@@ -57,7 +57,11 @@ pub fn generate_server_constants(
                 // be no larger than the size of the input types. So this method
                 // works for both.
                 for arg in op.args.values() {
-                    writeln!(out, "    + core::mem::size_of::<{}>()", arg.ty.0)?;
+                    writeln!(
+                        out,
+                        "    + core::mem::size_of::<{}>()",
+                        arg.ty.0
+                    )?;
                 }
             }
         }
@@ -67,20 +71,23 @@ pub fn generate_server_constants(
         match &op.reply {
             syntax::Reply::Result { ok, .. } => {
                 match op.encoding {
-                    syntax::Encoding::Zerocopy | syntax::Encoding::Ssmarshal => {
+                    syntax::Encoding::Zerocopy
+                    | syntax::Encoding::Ssmarshal => {
                         // This strategy only uses bytes for the OK side of the type,
                         // and only sends one type, so:
-                        writeln!(out, "core::mem::size_of::<{}>();", ok.display())?;
+                        writeln!(
+                            out,
+                            "core::mem::size_of::<{}>();",
+                            ok.display()
+                        )?;
                     }
                 }
             }
-            syntax::Reply::Simple(t) => {
-                match op.encoding {
-                    syntax::Encoding::Zerocopy | syntax::Encoding::Ssmarshal => {
-                        writeln!(out, "core::mem::size_of::<{}>();", t.display())?;
-                    }
+            syntax::Reply::Simple(t) => match op.encoding {
+                syntax::Encoding::Zerocopy | syntax::Encoding::Ssmarshal => {
+                    writeln!(out, "core::mem::size_of::<{}>();", t.display())?;
                 }
-            }
+            },
         }
 
         upper_names.push(upper_name);
@@ -115,10 +122,7 @@ pub fn generate_server_conversions(
                 )?;
             }
             syntax::Encoding::Ssmarshal => {
-                writeln!(
-                    out,
-                    "#[derive(Copy, Clone, serde::Deserialize)]"
-                )?;
+                writeln!(out, "#[derive(Copy, Clone, serde::Deserialize)]")?;
             }
         }
         writeln!(out, "pub struct {}_{}_ARGS {{", iface.name, name)?;
@@ -126,7 +130,14 @@ pub fn generate_server_conversions(
         for (argname, arg) in &op.args {
             match &arg.recv {
                 syntax::RecvStrategy::FromBytes => {
-                    writeln!(out, "    pub {}: {},", argname, arg.ty.0)?;
+                    // Special-case handling to send bools using a Zerocopy
+                    // encoding strategy, for efficiency.
+                    if arg.ty.0 == "bool" {
+                        writeln!(out, "    pub raw_{}: u8,", argname)?;
+                        need_args_impl = true;
+                    } else {
+                        writeln!(out, "    pub {}: {},", argname, arg.ty.0)?;
+                    }
                 }
                 syntax::RecvStrategy::FromPrimitive(ty)
                 | syntax::RecvStrategy::From(ty, _) => {
@@ -155,6 +166,19 @@ pub fn generate_server_conversions(
                         )?;
                         writeln!(out, "    }}")?;
                     }
+                    syntax::RecvStrategy::FromBytes => {
+                        // The only FromBytes type which also needs a decoder
+                        // function is a `bool` encoded as a single `u8`
+                        if arg.ty.0 == "bool" {
+                            writeln!(
+                                out,
+                                "    pub fn {}(&self) -> bool {{",
+                                argname
+                            )?;
+                            writeln!(out, "        self.raw_{} != 0", argname)?;
+                            writeln!(out, "    }}")?;
+                        }
+                    }
                     _ => (),
                 }
             }
@@ -178,7 +202,10 @@ pub fn generate_server_conversions(
                 writeln!(out, "pub fn read_{}_msg(bytes: &[u8])", name)?;
                 writeln!(out, "    -> Option<{}_{}_ARGS>", iface.name, name)?;
                 writeln!(out, "{{")?;
-                writeln!(out, "    ssmarshal::deserialize(bytes).ok().map(|(x, _)| x)")?;
+                writeln!(
+                    out,
+                    "    ssmarshal::deserialize(bytes).ok().map(|(x, _)| x)"
+                )?;
                 writeln!(out, "}}")?;
             }
         }
@@ -215,12 +242,7 @@ pub fn generate_server_op_impl(
     writeln!(out, "        match self {{")?;
     // Note: if we start allowing optional leases this will have to get fancier.
     for (opname, op) in &iface.ops {
-        writeln!(
-            out,
-            "            Self::{} => {},",
-            opname,
-            op.leases.len(),
-        )?;
+        writeln!(out, "            Self::{} => {},", opname, op.leases.len(),)?;
     }
     writeln!(out, "        }}")?;
     writeln!(out, "    }}")?;
@@ -298,11 +320,7 @@ pub fn generate_server_in_order_trait(
                 write!(out, ">>")?;
             }
             syntax::Reply::Simple(t) => {
-                write!(
-                    out,
-                    " -> {}",
-                    t.display()
-                )?;
+                write!(out, " -> {}", t.display())?;
             }
         }
         writeln!(out, ";")?;
@@ -329,7 +347,10 @@ pub fn generate_server_in_order_trait(
     writeln!(out, "        op: {}Operation,", iface.name)?;
     writeln!(out, "        incoming: &[u8],")?;
     writeln!(out, "        rm: &userlib::RecvMessage,")?;
-    writeln!(out, "    ) -> Result<(), idol_runtime::RequestError<u16>> {{")?;
+    writeln!(
+        out,
+        "    ) -> Result<(), idol_runtime::RequestError<u16>> {{"
+    )?;
     writeln!(out, "        #[allow(unused_imports)]")?;
     writeln!(out, "        use core::convert::TryInto;")?;
     writeln!(out, "        use idol_runtime::ClientError;")?;
@@ -347,7 +368,12 @@ pub fn generate_server_in_order_trait(
         for (argname, arg) in &op.args {
             match &arg.recv {
                 syntax::RecvStrategy::FromBytes => {
-                    writeln!(out, "                    args.{},", argname)?;
+                    writeln!(
+                        out,
+                        "                    args.{}{},",
+                        argname,
+                        if arg.ty.0 == "bool" { "()" } else { "" }
+                    )?;
                 }
                 syntax::RecvStrategy::From(_, None) => {
                     writeln!(
@@ -428,10 +454,7 @@ pub fn generate_server_in_order_trait(
                 writeln!(out, "                    }}")?;
                 writeln!(out, "                    Err(val) => {{")?;
                 // Simple returns can only return ClientError.
-                writeln!(
-                    out,
-                    "                        Err(val.into())"
-                )?;
+                writeln!(out, "                        Err(val.into())")?;
                 writeln!(out, "                    }}")?;
                 writeln!(out, "                }}")?;
             }
@@ -497,9 +520,9 @@ static _{}_IDOL_DEFINITION: [u8; {}] = ["##,
         text.len()
     )?;
 
-    for i in 0..bytes.len() {
+    for (i, byte) in bytes.iter().enumerate() {
         let delim = if i % 10 == 0 { "\n    " } else { " " };
-        write!(out, "{}0x{:02x},", delim, bytes[i])?;
+        write!(out, "{}0x{:02x},", delim, byte)?;
     }
 
     writeln!(out, "\n];\n")?;

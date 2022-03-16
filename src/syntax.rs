@@ -26,13 +26,14 @@ pub struct Interface {
     pub ops: IndexMap<String, Operation>,
 }
 
-impl Interface {
+impl std::str::FromStr for Interface {
+    type Err = ron::Error;
     /// Converts the canonical text representation of an interface into an
     /// `Interface`.
     ///
     /// The canonical text representation is the Serde representation of
     /// `Interface` as encoded by RON.
-    pub fn from_str(text: &str) -> Result<Self, ron::Error> {
+    fn from_str(text: &str) -> Result<Self, ron::Error> {
         let iface: Self = ron::de::from_str(text)?;
         Ok(iface)
     }
@@ -165,10 +166,13 @@ impl AttributedTy {
 
     /// Returns the Rust type that should be used to represent this in the
     /// internal args/reply structs.
-    pub fn repr_ty(&self) -> &Ty {
+    pub fn repr_ty(&self) -> &str {
         match &self.recv {
-            RecvStrategy::From(t, _) | RecvStrategy::FromPrimitive(t) => t,
-            RecvStrategy::FromBytes => &self.ty,
+            RecvStrategy::From(t, _) | RecvStrategy::FromPrimitive(t) => &t.0,
+            RecvStrategy::FromBytes => match self.ty.0.as_str() {
+                "bool" => "u8",
+                ty => ty,
+            },
         }
     }
 }
@@ -216,8 +220,9 @@ impl<'de> serde::de::Visitor<'de> for AttributedTyVisitor {
                 }
             }
         }
-        let ty = ty.ok_or_else(|| serde::de::Error::missing_field("type"))?;
-        let recv = recv.unwrap_or_else(RecvStrategy::default);
+        let ty: Ty =
+            ty.ok_or_else(|| serde::de::Error::missing_field("type"))?;
+        let recv = recv.unwrap_or_default();
         Ok(AttributedTy { ty, recv })
     }
 
