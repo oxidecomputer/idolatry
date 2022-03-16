@@ -130,24 +130,20 @@ pub fn generate_server_conversions(
         for (argname, arg) in &op.args {
             match &arg.recv {
                 syntax::RecvStrategy::FromBytes => {
-                    writeln!(out, "    pub {}: {},", argname, arg.ty.0)?;
+                    // Special-case handling to send bools using a Zerocopy
+                    // encoding strategy, for efficiency.
+                    if arg.ty.0 == "bool" {
+                        writeln!(out, "    pub raw_{}: u8,", argname)?;
+                        need_args_impl = true;
+                    } else {
+                        writeln!(out, "    pub {}: {},", argname, arg.ty.0)?;
+                    }
                 }
                 syntax::RecvStrategy::FromPrimitive(ty)
                 | syntax::RecvStrategy::From(ty, _) => {
                     writeln!(out, "    pub raw_{}: {},", argname, ty.0)?;
                     need_args_impl = true;
                 }
-                syntax::RecvStrategy::BoolAsU8 => match op.encoding {
-                    // Special-case handling to send bools using a Zerocopy
-                    // encoding strategy, for efficiency.
-                    syntax::Encoding::Zerocopy => {
-                        writeln!(out, "    pub raw_{}: u8,", argname)?;
-                        need_args_impl = true;
-                    }
-                    syntax::Encoding::Ssmarshal => {
-                        writeln!(out, "    pub {}: bool,", argname)?;
-                    }
-                },
             }
         }
         writeln!(out, "}}")?;
@@ -170,14 +166,18 @@ pub fn generate_server_conversions(
                         )?;
                         writeln!(out, "    }}")?;
                     }
-                    syntax::RecvStrategy::BoolAsU8 => {
-                        writeln!(
-                            out,
-                            "    pub fn {}(&self) -> bool {{",
-                            argname
-                        )?;
-                        writeln!(out, "        self.raw_{} != 0", argname)?;
-                        writeln!(out, "    }}")?;
+                    syntax::RecvStrategy::FromBytes => {
+                        // The only FromBytes type which also needs a decoder
+                        // function is a `bool` encoded as a single `u8`
+                        if arg.ty.0 == "bool" {
+                            writeln!(
+                                out,
+                                "    pub fn {}(&self) -> bool {{",
+                                argname
+                            )?;
+                            writeln!(out, "        self.raw_{} != 0", argname)?;
+                            writeln!(out, "    }}")?;
+                        }
                     }
                     _ => (),
                 }
@@ -368,10 +368,12 @@ pub fn generate_server_in_order_trait(
         for (argname, arg) in &op.args {
             match &arg.recv {
                 syntax::RecvStrategy::FromBytes => {
-                    writeln!(out, "                    args.{},", argname)?;
-                }
-                syntax::RecvStrategy::BoolAsU8 => {
-                    writeln!(out, "                    args.{}(),", argname)?;
+                    writeln!(
+                        out,
+                        "                    args.{}{},",
+                        argname,
+                        if arg.ty.0 == "bool" { "()" } else { "" }
+                    )?;
                 }
                 syntax::RecvStrategy::From(_, None) => {
                     writeln!(

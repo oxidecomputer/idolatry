@@ -161,13 +161,9 @@ pub fn generate_client_stub(
         for (argname, arg) in &op.args {
             // Special-case handling of `bool` values when using the Zerocopy
             // encoding strategy, for efficiency.
-            let ty_str = if matches!(op.encoding, syntax::Encoding::Zerocopy)
-                && arg.ty.0 == "bool"
-            {
-                assert!(arg.ty.0 == "bool");
+            let ty_str = if arg.ty.0 == "bool" {
                 "u8"
             } else {
-                assert!(arg.ty.0 != "bool");
                 arg.ty.0.as_str()
             };
 
@@ -224,11 +220,9 @@ pub fn generate_client_stub(
         // Create instance of args struct from args.
         writeln!(out, "        let args = {}_{}_ARGS {{", iface.name, name)?;
         for (argname, arg) in &op.args {
-            // Special case: we can send booleans as non-zero u8 while still
-            // using the Zerocopy encoding for efficiency.
-            if matches!(op.encoding, syntax::Encoding::Zerocopy)
-                && matches!(arg.recv, syntax::RecvStrategy::BoolAsU8)
-            {
+            // Special case: we send booleans as non-zero u8, so that
+            // we can use them in Zerocopy situations
+            if arg.ty.0 == "bool" {
                 writeln!(out, "            {0}: arg_{0} as u8,", argname)?;
             } else {
                 writeln!(out, "            {0}: arg_{0},", argname)?;
@@ -312,7 +306,11 @@ pub fn generate_client_stub(
                 }
                 match &t.recv {
                     syntax::RecvStrategy::FromBytes => {
-                        writeln!(out, "        v")?;
+                        if t.ty.0 == "bool" {
+                            writeln!(out, "        v != 0")?;
+                        } else {
+                            writeln!(out, "        v")?;
+                        }
                     }
                     syntax::RecvStrategy::From(_, None) => {
                         writeln!(out, "        v.into()")?;
@@ -322,9 +320,6 @@ pub fn generate_client_stub(
                     }
                     syntax::RecvStrategy::FromPrimitive(p) => {
                         writeln!(out, "        <{} as userlib::FromPrimitive>::from_{}(v).unwrap()", t.ty.0, p.0)?;
-                    }
-                    syntax::RecvStrategy::BoolAsU8 => {
-                        writeln!(out, "        v != 0")?;
                     }
                 }
             }
@@ -356,7 +351,11 @@ pub fn generate_client_stub(
                 }
                 match &ok.recv {
                     syntax::RecvStrategy::FromBytes => {
-                        writeln!(out, "            Ok(v)")?;
+                        if ok.ty.0 == "bool" {
+                            writeln!(out, "            Ok(v != 0)")?;
+                        } else {
+                            writeln!(out, "            Ok(v)")?;
+                        }
                     }
                     syntax::RecvStrategy::From(_, None) => {
                         writeln!(out, "            Ok(v.into())")?;
@@ -366,9 +365,6 @@ pub fn generate_client_stub(
                     }
                     syntax::RecvStrategy::FromPrimitive(p) => {
                         writeln!(out, "            Ok(<{} as userlib::FromPrimitive>::from_{}(v).unwrap())", ok.ty.0, p.0)?;
-                    }
-                    syntax::RecvStrategy::BoolAsU8 => {
-                        writeln!(out, "            Ok(v != 0)")?;
                     }
                 }
                 writeln!(out, "        }} else {{")?;
