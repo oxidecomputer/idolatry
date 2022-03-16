@@ -201,6 +201,17 @@ you want:
 
 The value taken by `recv` is an enum so we can add more methods in the future.
 
+### Booleans as arguments
+As mentioned above, booleans are not normally valid for use with `zerocopy`.
+They also don't implement `From` or [`TryFrom`](https://github.com/rust-lang/rust/pull/50597),
+so the alternate `recv` strategies above don't work.
+
+Since `bool` is a common type, they are special-cased in Idol to pack into
+a single `u8`. The value is encoded with `false => 0, true => 1`, and
+decoded with `0 => false, * => true`. APIs which call into Idol functions
+without using the generated client API (e.g. [Humility](https://github.com/oxidecomputer/humility))
+must also implement this special-case behavior.
+
 [Hubris]: https://hubris.oxide.computer/
 [serde]: https://serde.rs/
 [RON]: https://docs.rs/ron/0.7.0/ron/
