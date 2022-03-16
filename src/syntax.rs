@@ -26,13 +26,14 @@ pub struct Interface {
     pub ops: IndexMap<String, Operation>,
 }
 
-impl Interface {
+impl std::str::FromStr for Interface {
+    type Err = ron::Error;
     /// Converts the canonical text representation of an interface into an
     /// `Interface`.
     ///
     /// The canonical text representation is the Serde representation of
     /// `Interface` as encoded by RON.
-    pub fn from_str(text: &str) -> Result<Self, ron::Error> {
+    fn from_str(text: &str) -> Result<Self, ron::Error> {
         let iface: Self = ron::de::from_str(text)?;
         Ok(iface)
     }
@@ -221,7 +222,7 @@ impl<'de> serde::de::Visitor<'de> for AttributedTyVisitor {
         }
         let ty: Ty =
             ty.ok_or_else(|| serde::de::Error::missing_field("type"))?;
-        let recv = recv.unwrap_or_else(Default::default);
+        let recv = recv.unwrap_or_default();
         Ok(AttributedTy { ty, recv })
     }
 

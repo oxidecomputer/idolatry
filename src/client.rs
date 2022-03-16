@@ -161,10 +161,9 @@ pub fn generate_client_stub(
         for (argname, arg) in &op.args {
             // Special-case handling of `bool` values when using the Zerocopy
             // encoding strategy, for efficiency.
-            let ty_str = if arg.ty.0 == "bool" {
-                "u8"
-            } else {
-                arg.ty.0.as_str()
+            let ty_str = match arg.ty.0.as_str() {
+                "bool" => "u8",
+                ty => ty,
             };
 
             writeln!(out, "            {}: {},", argname, ty_str)?;
@@ -306,11 +305,10 @@ pub fn generate_client_stub(
                 }
                 match &t.recv {
                     syntax::RecvStrategy::FromBytes => {
-                        if t.ty.0 == "bool" {
-                            writeln!(out, "        v != 0")?;
-                        } else {
-                            writeln!(out, "        v")?;
-                        }
+                        match t.ty.0.as_str() {
+                            "bool" => writeln!(out, "        v != 0"),
+                            _ => writeln!(out, "        v"),
+                        }?;
                     }
                     syntax::RecvStrategy::From(_, None) => {
                         writeln!(out, "        v.into()")?;
@@ -351,11 +349,10 @@ pub fn generate_client_stub(
                 }
                 match &ok.recv {
                     syntax::RecvStrategy::FromBytes => {
-                        if ok.ty.0 == "bool" {
-                            writeln!(out, "            Ok(v != 0)")?;
-                        } else {
-                            writeln!(out, "            Ok(v)")?;
-                        }
+                        match ok.ty.0.as_str() {
+                            "bool" => writeln!(out, "            Ok(v != 0)"),
+                            _ => writeln!(out, "            Ok(v)"),
+                        }?;
                     }
                     syntax::RecvStrategy::From(_, None) => {
                         writeln!(out, "            Ok(v.into())")?;
