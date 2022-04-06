@@ -34,6 +34,9 @@ pub fn generate_client_stub(
 ) -> Result<(), Box<dyn std::error::Error>> {
     common::generate_op_enum(iface, &mut out)?;
 
+    writeln!(out, "#[allow(unused_imports)]")?;
+    writeln!(out, "use userlib::UnwrapLite;")?;
+
     writeln!(out, "#[derive(Clone, Debug)]")?;
     writeln!(out, "pub struct {} {{", iface.name)?;
     writeln!(out, "    current_id: core::cell::Cell<userlib::TaskId>,")?;
@@ -237,7 +240,7 @@ pub fn generate_client_stub(
             syntax::Encoding::Ssmarshal => {
                 // Serialize the arguments.
                 writeln!(out, "        let mut argsbuf = [0; core::mem::size_of::<{}_{}_ARGS>()];", iface.name, name)?;
-                writeln!(out, "        let arglen = ssmarshal::serialize(&mut argsbuf, &args).unwrap();")?;
+                writeln!(out, "        let arglen = ssmarshal::serialize(&mut argsbuf, &args).unwrap_lite();")?;
             }
         }
         // Create reply buffer.
@@ -292,7 +295,7 @@ pub fn generate_client_stub(
                         writeln!(out, "            value: {},", t.repr_ty())?;
                         writeln!(out, "        }}")?;
                         writeln!(out, "        let lv = zerocopy::LayoutVerified::<_, {}>::new_unaligned(&reply[..])", reply_ty)?;
-                        writeln!(out, "            .unwrap();")?;
+                        writeln!(out, "            .unwrap_lite();")?;
                         writeln!(
                             out,
                             "        let v: {} = lv.value;",
@@ -300,7 +303,7 @@ pub fn generate_client_stub(
                         )?;
                     }
                     syntax::Encoding::Ssmarshal => {
-                        writeln!(out, "        let (v, _): ({}, _) = ssmarshal::deserialize(&reply[..len]).unwrap();", t.repr_ty())?;
+                        writeln!(out, "        let (v, _): ({}, _) = ssmarshal::deserialize(&reply[..len]).unwrap_lite();", t.repr_ty())?;
                     }
                 }
                 match &t.recv {
@@ -317,7 +320,7 @@ pub fn generate_client_stub(
                         writeln!(out, "        {}(v)", f)?;
                     }
                     syntax::RecvStrategy::FromPrimitive(p) => {
-                        writeln!(out, "        <{} as userlib::FromPrimitive>::from_{}(v).unwrap()", t.ty.0, p.0)?;
+                        writeln!(out, "        <{} as userlib::FromPrimitive>::from_{}(v).unwrap_lite()", t.ty.0, p.0)?;
                     }
                 }
             }
@@ -336,7 +339,7 @@ pub fn generate_client_stub(
                         )?;
                         writeln!(out, "            }}")?;
                         writeln!(out, "            let lv = zerocopy::LayoutVerified::<_, {}>::new_unaligned(&reply[..])", reply_ty)?;
-                        writeln!(out, "                .unwrap();")?;
+                        writeln!(out, "                .unwrap_lite();")?;
                         writeln!(
                             out,
                             "            let v: {} = lv.value;",
@@ -344,7 +347,7 @@ pub fn generate_client_stub(
                         )?;
                     }
                     syntax::Encoding::Ssmarshal => {
-                        writeln!(out, "            let (v, _): ({}, _) = ssmarshal::deserialize(&reply[..len]).unwrap();", ok.repr_ty())?;
+                        writeln!(out, "            let (v, _): ({}, _) = ssmarshal::deserialize(&reply[..len]).unwrap_lite();", ok.repr_ty())?;
                     }
                 }
                 match &ok.recv {
@@ -361,7 +364,7 @@ pub fn generate_client_stub(
                         writeln!(out, "            Ok({}(v))", f)?;
                     }
                     syntax::RecvStrategy::FromPrimitive(p) => {
-                        writeln!(out, "            Ok(<{} as userlib::FromPrimitive>::from_{}(v).unwrap())", ok.ty.0, p.0)?;
+                        writeln!(out, "            Ok(<{} as userlib::FromPrimitive>::from_{}(v).unwrap_lite())", ok.ty.0, p.0)?;
                     }
                 }
                 writeln!(out, "        }} else {{")?;
@@ -379,7 +382,7 @@ pub fn generate_client_stub(
                             "            Err(<{} as core::convert::TryFrom<u32>>::try_from(rc)",
                             ty.0
                         )?;
-                        writeln!(out, "                .unwrap())")?;
+                        writeln!(out, "                .unwrap_lite())")?;
                     }
                 }
                 writeln!(out, "        }}")?;

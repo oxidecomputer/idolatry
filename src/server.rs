@@ -23,6 +23,9 @@ pub fn build_server_support(
     let text = std::fs::read_to_string(source)?;
     let iface: syntax::Interface = ron::de::from_str(&text)?;
 
+    writeln!(stub_file, "#[allow(unused_imports)]")?;
+    writeln!(stub_file, "use userlib::UnwrapLite;")?;
+
     generate_server_constants(&iface, &mut stub_file)?;
     generate_server_conversions(&iface, &mut stub_file)?;
     common::generate_op_enum(&iface, &mut stub_file)?;
@@ -417,7 +420,7 @@ pub fn generate_server_in_order_trait(
                     // just gotten it _out of_ a NonZeroU32 here, so we know
                     // it'll be statically valid.
                     format!(
-                        ", Some(core::num::NonZeroU32::new({}).unwrap())",
+                        ", Some(core::num::NonZeroU32::new({}).unwrap_lite())",
                         n
                     )
                 } else {
@@ -434,7 +437,7 @@ pub fn generate_server_in_order_trait(
 
             write!(out, "                    idol_runtime::Leased::{}{}(rm.sender, {}{}).ok_or(ClientError::BadLease.fail())?", fun, suffix, i, limit)?;
             if lease.max_len.is_some() {
-                write!(out, ".try_into().unwrap()")?;
+                write!(out, ".try_into().unwrap_lite()")?;
             }
             writeln!(out, ",")?;
         }
@@ -450,7 +453,7 @@ pub fn generate_server_in_order_trait(
                     syntax::Encoding::Ssmarshal => {
                         writeln!(out, "                        let mut reply_buf = [0u8; {}_REPLY_SIZE];",
                             opname.to_uppercase())?;
-                        writeln!(out, "                        let n_reply = ssmarshal::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap();")?;
+                        writeln!(out, "                        let n_reply = hubpack::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap_lite();")?;
                         writeln!(out, "                        userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);")?;
                     }
                 }
@@ -471,7 +474,7 @@ pub fn generate_server_in_order_trait(
                     syntax::Encoding::Ssmarshal => {
                         writeln!(out, "                        let mut reply_buf = [0u8; {}_REPLY_SIZE];",
                             opname.to_uppercase())?;
-                        writeln!(out, "                        let n_reply = ssmarshal::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap();")?;
+                        writeln!(out, "                        let n_reply = ssmarshal::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap_lite();")?;
                         writeln!(out, "                        userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);")?;
                     }
                 }
