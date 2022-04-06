@@ -119,9 +119,9 @@ pub trait NotificationHandler {
 /// for it.
 pub trait ServerOp: FromPrimitive + Copy {
     /// Size of response buffer required for this message, in bytes.
-    fn max_reply_size(&self) -> usize;
+    fn max_reply_size(self) -> usize;
     /// Number of leases required for this operation.
-    fn required_lease_count(&self) -> usize;
+    fn required_lease_count(self) -> usize;
 }
 
 /// Trait implemented by things that serve.

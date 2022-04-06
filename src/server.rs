@@ -224,7 +224,7 @@ pub fn generate_server_op_impl(
         iface.name
     )?;
 
-    writeln!(out, "    fn max_reply_size(&self) -> usize {{")?;
+    writeln!(out, "    fn max_reply_size(self) -> usize {{")?;
     writeln!(out, "        match self {{")?;
     for opname in iface.ops.keys() {
         writeln!(
@@ -238,7 +238,7 @@ pub fn generate_server_op_impl(
     writeln!(out, "    }}")?;
     writeln!(out)?;
 
-    writeln!(out, "    fn required_lease_count(&self) -> usize {{")?;
+    writeln!(out, "    fn required_lease_count(self) -> usize {{")?;
     writeln!(out, "        match self {{")?;
     // Note: if we start allowing optional leases this will have to get fancier.
     for (opname, op) in &iface.ops {
@@ -320,7 +320,11 @@ pub fn generate_server_in_order_trait(
                 write!(out, ">>")?;
             }
             syntax::Reply::Simple(t) => {
-                write!(out, " -> {}", t.display())?;
+                write!(
+                    out,
+                    " -> Result<{}, idol_runtime::RequestError<core::convert::Infallible>>",
+                    t.display()
+                )?;
             }
         }
         writeln!(out, ";")?;
@@ -452,10 +456,9 @@ pub fn generate_server_in_order_trait(
                 }
                 writeln!(out, "                        Ok(())")?;
                 writeln!(out, "                    }}")?;
-                writeln!(out, "                    Err(val) => {{")?;
-                // Simple returns can only return ClientError.
-                writeln!(out, "                        Err(val.into())")?;
-                writeln!(out, "                    }}")?;
+                // Simple returns can only return ClientError. The compiler
+                // can't see this. Jump through some hoops:
+                writeln!(out, "                    Err(val) => Err(val.map_runtime(|e| match e {{ }})),")?;
                 writeln!(out, "                }}")?;
             }
             syntax::Reply::Result { err, .. } => {
