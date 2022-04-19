@@ -4,13 +4,15 @@
 
 pub mod client;
 pub mod common;
+pub(crate) mod serde_helpers;
 pub mod server;
 pub mod syntax;
-pub(crate) mod serde_helpers;
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use std::str::FromStr;
+
     const EXAMPLE: &str = r#"
         Interface(
             name: "Spi",
@@ -42,7 +44,7 @@ mod test {
 
     #[test]
     fn parse_example() {
-        let _iface = super::syntax::Interface::from_str(EXAMPLE)
+        let _iface = syntax::Interface::from_str(EXAMPLE)
             .expect("example failed to parse");
     }
 }
