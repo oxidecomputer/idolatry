@@ -63,7 +63,7 @@ pub struct Operation {
     /// zero leases are assumed.
     ///
     /// The order of leases is significant, as it determines their numerical
-    /// index from the jerver's perspective.
+    /// index from the server's perspective.
     #[serde(
         default,
         deserialize_with = "crate::serde_helpers::deserialize_reject_dup_keys"
