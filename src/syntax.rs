@@ -23,6 +23,9 @@ pub struct Interface {
     ///
     /// This is an `IndexMap`, and the order of declaration of the operations is
     /// significant -- it determines the operation numbering.
+    #[serde(
+        deserialize_with = "crate::serde_helpers::deserialize_reject_dup_keys"
+    )]
     pub ops: IndexMap<String, Operation>,
 }
 
@@ -52,14 +55,20 @@ pub struct Operation {
     /// The order of arguments is significant, it determines the packing order.
     /// Because this means that ergonomics changes to the API can affect runtime
     /// performance, we may want a way to override this eventually (TODO).
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_helpers::deserialize_reject_dup_keys"
+    )]
     pub args: IndexMap<String, AttributedTy>,
     /// Arguments of the operation that are converted into leases. If omitted,
     /// zero leases are assumed.
     ///
     /// The order of leases is significant, as it determines their numerical
     /// index from the server's perspective.
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_helpers::deserialize_reject_dup_keys"
+    )]
     pub leases: IndexMap<String, Lease>,
     /// Expected type of the response.
     pub reply: Reply,
@@ -297,5 +306,113 @@ pub enum RecvStrategy {
 impl Default for RecvStrategy {
     fn default() -> Self {
         Self::FromBytes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reject_duplicate_ops() {
+        const HAS_DUPES: &str = r#"
+            Interface(
+                name: "Spi",
+                ops: {
+                    "exchange": (
+                        args: {
+                            "device_index": (type: "u8"),
+                        },
+                        reply: Result(
+                            ok: "()",
+                            err: CLike("SpiError"),
+                        ),
+                    ),
+                    "lock": (
+                        args: {
+                            "device_index": (type: "u8"),
+                        },
+                        reply: Result(
+                            ok: "()",
+                            err: CLike("SpiError"),
+                        ),
+                    ),
+                    "exchange": (
+                        args: {
+                            "device_index": (type: "u8"),
+                        },
+                        reply: Result(
+                            ok: "()",
+                            err: CLike("SpiError"),
+                        ),
+                    ),
+                },
+            )
+        "#;
+
+        let err = Interface::from_str(HAS_DUPES).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "invalid entry: found duplicate key \"exchange\""
+        );
+    }
+
+    #[test]
+    fn reject_duplicate_args() {
+        const HAS_DUPES: &str = r#"
+            Interface(
+                name: "Spi",
+                ops: {
+                    "exchange": (
+                        args: {
+                            "foo": (type: "u8"),
+                            "bar": (type: "u8"),
+                            "foo": (type: "u8"),
+                        },
+                        reply: Result(
+                            ok: "()",
+                            err: CLike("SpiError"),
+                        ),
+                    ),
+                },
+            )
+        "#;
+
+        let err = Interface::from_str(HAS_DUPES).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "invalid entry: found duplicate key \"foo\""
+        );
+    }
+
+    #[test]
+    fn reject_duplicate_leases() {
+        const HAS_DUPES: &str = r#"
+            Interface(
+                name: "Spi",
+                ops: {
+                    "exchange": (
+                        args: {
+                            "foo": (type: "u8"),
+                        },
+                        leases: {
+                            "source": (type: "[u8]", read: true),
+                            "sink": (type: "[u8]", write: true),
+                            "source": (type: "[u8]", read: true),
+                        },
+                        reply: Result(
+                            ok: "()",
+                            err: CLike("SpiError"),
+                        ),
+                    ),
+                },
+            )
+        "#;
+
+        let err = Interface::from_str(HAS_DUPES).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "invalid entry: found duplicate key \"source\""
+        );
     }
 }
