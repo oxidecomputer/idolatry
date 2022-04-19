@@ -312,6 +312,7 @@ impl Default for RecvStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn reject_duplicate_ops() {
