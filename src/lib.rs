@@ -10,6 +10,7 @@ pub(crate) mod serde_helpers;
 
 #[cfg(test)]
 mod test {
+    use std::str::FromStr;
     const EXAMPLE: &str = r#"
         Interface(
             name: "Spi",

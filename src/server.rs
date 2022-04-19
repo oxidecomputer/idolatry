@@ -51,14 +51,12 @@ pub fn generate_server_constants(
     for (name, op) in &iface.ops {
         let upper_name = name.to_uppercase();
 
-        writeln!(out, "pub const {}_MSG_SIZE: usize = 0", upper_name)?;
-
+        write!(out, "pub const {}_MSG_SIZE: usize = ", upper_name)?;
         match op.encoding {
-            syntax::Encoding::Zerocopy | syntax::Encoding::Ssmarshal => {
-                // Zerocopy moves fields as a packed struct; Ssmarshal
-                // serializes them, but guarantees that the serialized size will
-                // be no larger than the size of the input types. So this method
-                // works for both.
+            // Zerocopy moves fields as a packed struct, so the sum of input
+            // type sizes is sufficient to fit the message.
+            syntax::Encoding::Zerocopy => {
+                writeln!(out, "0")?;
                 for arg in op.args.values() {
                     writeln!(
                         out,
@@ -66,9 +64,20 @@ pub fn generate_server_constants(
                         arg.ty.0
                     )?;
                 }
+                writeln!(out, "    ;")?;
+            }
+
+            // ssmarshal guarantees that the serialized size will be no longer
+            // than the size of the input struct. Note that this may be larger
+            // than the sum of struct members!
+            syntax::Encoding::Ssmarshal => {
+                writeln!(
+                    out,
+                    "\n    core::mem::size_of::<{}_{}_ARGS>();",
+                    iface.name, name
+                )?;
             }
         }
-        writeln!(out, "    ;")?;
 
         write!(out, "pub const {}_REPLY_SIZE: usize =", upper_name)?;
         match &op.reply {
