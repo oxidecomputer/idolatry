@@ -288,9 +288,9 @@ pub fn generate_client_stub(
             syntax::Reply::Simple(t) => {
                 //writeln!(out, "        if rc != 0 {{ panic!(); }}")?;
                 writeln!(out, "        let _rc = rc;")?;
-                writeln!(out, "        let _len = len;")?;
                 match op.encoding {
                     syntax::Encoding::Zerocopy => {
+                        writeln!(out, "        let _len = len;")?;
                         let reply_ty = format!("{}_{}_REPLY", iface.name, name);
                         writeln!(out, "        #[derive(zerocopy::FromBytes, zerocopy::Unaligned)]")?;
                         writeln!(out, "        #[repr(C, packed)]")?;
@@ -331,6 +331,7 @@ pub fn generate_client_stub(
                 writeln!(out, "        if rc == 0 {{")?;
                 match op.encoding {
                     syntax::Encoding::Zerocopy => {
+                        writeln!(out, "        let _len = len;")?;
                         let reply_ty = format!("{}_{}_REPLY", iface.name, name);
                         writeln!(out, "            #[derive(zerocopy::FromBytes, zerocopy::Unaligned)]")?;
                         writeln!(out, "            #[repr(C, packed)]")?;
@@ -373,7 +374,6 @@ pub fn generate_client_stub(
                 writeln!(out, "        }} else {{")?;
                 match err {
                     syntax::Error::CLike(ty) => {
-                        writeln!(out, "            assert!(len == 0);")?;
                         writeln!(
                             out,
                             "            if let Some(g) = userlib::extract_new_generation(rc) {{"
@@ -388,7 +388,6 @@ pub fn generate_client_stub(
                         writeln!(out, "                .unwrap_lite())")?;
                     }
                     syntax::Error::ServerDeath => {
-                        writeln!(out, "            assert!(len == 0);")?;
                         writeln!(
                             out,
                             "            if let Some(g) = userlib::extract_new_generation(rc) {{"
