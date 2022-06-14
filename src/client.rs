@@ -379,7 +379,7 @@ pub fn generate_client_stub(
                         writeln!(out, "            }}")?;
                         writeln!(
                             out,
-                            "            Err(<{} as core::convert::TryFrom<u32>>::try_from(rc)",
+                            "            Err(<{} as idol_runtime::IdolError>::try_from_u32(rc)",
                             ty.0
                         )?;
                         writeln!(out, "                .unwrap_lite())")?;

@@ -497,7 +497,7 @@ pub fn generate_server_in_order_trait(
                     syntax::Error::CLike(_) => {
                         writeln!(
                             out,
-                            "                        Err(val.map_runtime(u16::from))"
+                            "                        Err(val.map_runtime(idol_runtime::IdolError::as_u16))"
                         )?;
                     }
                 }

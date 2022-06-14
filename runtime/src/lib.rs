@@ -28,6 +28,29 @@ pub enum ClientError {
     WentAway = 0xFFFF_FE03,
 }
 
+/// Trait for things which can be handled as an Idol error. In practice, this
+/// will delegate to `num::traits::FromPrimitive`, but we define the trait
+/// ourselves so that it can be implemented on `core::convert::Infallible`.
+pub trait IdolError
+where
+    Self: Sized,
+{
+    fn as_u16(self) -> u16;
+    fn as_u32(self) -> u32 {
+        self.as_u16() as u32
+    }
+    fn try_from_u32(v: u32) -> Option<Self>;
+}
+
+impl IdolError for core::convert::Infallible {
+    fn as_u16(self) -> u16 {
+        unreachable!("Cannot convert Infallible")
+    }
+    fn try_from_u32(_v: u32) -> Option<Self> {
+        None
+    }
+}
+
 impl ClientError {
     pub fn into_fault(self) -> Option<ReplyFaultReason> {
         match self {
