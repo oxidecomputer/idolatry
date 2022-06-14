@@ -328,6 +328,9 @@ pub fn generate_server_in_order_trait(
                     syntax::Error::CLike(ty) => {
                         write!(out, "{}", ty.0)?;
                     }
+                    syntax::Error::ServerDeath => {
+                        write!(out, " core::convert::Infallible")?;
+                    }
                 }
                 write!(out, ">>")?;
             }
@@ -498,6 +501,12 @@ pub fn generate_server_in_order_trait(
                         writeln!(
                             out,
                             "                        Err(val.map_runtime(u16::from))"
+                        )?;
+                    }
+                    syntax::Error::ServerDeath => {
+                        writeln!(
+                            out,
+                            "                        Err(val.map_runtime(|e| match e {{ }}))"
                         )?;
                     }
                 }

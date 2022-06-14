@@ -28,14 +28,28 @@ pub enum ClientError {
     WentAway = 0xFFFF_FE03,
 }
 
+/// Simple return type that is used when a function can only fail due to
+/// the server dying (i.e. it will never return an error code of its own)
+///
+/// This should be used with the `ServerDeath` return type, which makes the
+/// server-side API infallible but returns `Result<T, ServerDeath>` to the
+/// client.
+pub struct ServerDeath;
+
 impl ClientError {
     pub fn into_fault(self) -> Option<ReplyFaultReason> {
         match self {
-            Self::UnknownOperation => Some(ReplyFaultReason::UndefinedOperation),
+            Self::UnknownOperation => {
+                Some(ReplyFaultReason::UndefinedOperation)
+            }
             Self::BadMessageSize => Some(ReplyFaultReason::BadMessageSize),
-            Self::BadMessageContents => Some(ReplyFaultReason::BadMessageContents),
+            Self::BadMessageContents => {
+                Some(ReplyFaultReason::BadMessageContents)
+            }
             Self::BadLease => Some(ReplyFaultReason::BadLeases),
-            Self::ReplyBufferTooSmall => Some(ReplyFaultReason::ReplyBufferTooSmall),
+            Self::ReplyBufferTooSmall => {
+                Some(ReplyFaultReason::ReplyBufferTooSmall)
+            }
 
             // Don't fault clients that just got restarted. (Wouldn't work
             // anyway.)
@@ -66,7 +80,10 @@ impl<E> RequestError<E> {
         Self::Fail(ClientError::WentAway)
     }
 
-    pub fn map_runtime<T>(self, mut cvt: impl FnMut(E) -> T) -> RequestError<T> {
+    pub fn map_runtime<T>(
+        self,
+        mut cvt: impl FnMut(E) -> T,
+    ) -> RequestError<T> {
         match self {
             Self::Runtime(e) => RequestError::Runtime(cvt(e)),
             Self::Fail(e) => RequestError::Fail(e),
@@ -783,7 +800,9 @@ pub struct LeaseBufReader<A: AttributeRead, const N: usize> {
     buf: [u8; N],
 }
 
-impl<A: AttributeRead, const N: usize> From<Leased<A, [u8]>> for LeaseBufReader<A, N> {
+impl<A: AttributeRead, const N: usize> From<Leased<A, [u8]>>
+    for LeaseBufReader<A, N>
+{
     fn from(lease: Leased<A, [u8]>) -> Self {
         Self {
             lease,
@@ -810,10 +829,8 @@ impl<A: AttributeRead, const N: usize> LeaseBufReader<A, N> {
             let chunk_size = end - self.pos;
             // Try to fill our buffer. If this fails, it means the client went
             // away, so we'll report EOF.
-            self.lease.read_range(
-                self.pos..end,
-                &mut self.buf[N - chunk_size..],
-            )?;
+            self.lease
+                .read_range(self.pos..end, &mut self.buf[N - chunk_size..])?;
             // Reset buffer state:
             self.pos += chunk_size;
             self.buf_left = chunk_size;
@@ -846,7 +863,9 @@ pub struct LeaseBufWriter<A: AttributeWrite, const N: usize> {
     buf: [u8; N],
 }
 
-impl<A: AttributeWrite, const N: usize> From<Leased<A, [u8]>> for LeaseBufWriter<A, N> {
+impl<A: AttributeWrite, const N: usize> From<Leased<A, [u8]>>
+    for LeaseBufWriter<A, N>
+{
     fn from(lease: Leased<A, [u8]>) -> Self {
         Self {
             lease,
@@ -884,7 +903,8 @@ impl<A: AttributeWrite, const N: usize> LeaseBufWriter<A, N> {
         let n = self.buf_valid;
         self.buf_valid = 0;
         if n != 0 {
-            self.lease.write_range(self.pos..self.pos + n, &self.buf[..n])?;
+            self.lease
+                .write_range(self.pos..self.pos + n, &self.buf[..n])?;
             self.pos += n;
         }
         Ok(())
@@ -898,4 +918,3 @@ impl<A: AttributeWrite, const N: usize> Drop for LeaseBufWriter<A, N> {
         self.flush().ok();
     }
 }
-

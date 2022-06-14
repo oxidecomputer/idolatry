@@ -280,6 +280,11 @@ pub enum Error {
     /// The error type here may or may not be required to also represent dead
     /// codes, depending on whether the operation is `idempotent`.
     CLike(Ty),
+
+    /// The client will never return an error, but the function is not
+    /// idempotent and will return `Err(ServerDeath {})` if the server died
+    /// mid-message.
+    ServerDeath,
 }
 
 /// Enumerates different ways that a type might be unpacked when received over
