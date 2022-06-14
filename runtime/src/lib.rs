@@ -30,18 +30,18 @@ pub enum ClientError {
 
 /// Simple return type that is used when a function can only fail due to
 /// the server dying (i.e. it will never return an error code of its own)
-pub struct ServerDied;
-impl From<ServerDied> for u16 {
-    fn from(_: ServerDied) -> u16 {
+pub struct ServerDeath;
+impl From<ServerDeath> for u16 {
+    fn from(_: ServerDeath) -> u16 {
         0xDEAD
     }
 }
-impl From<ServerDied> for u32 {
-    fn from(v: ServerDied) -> u32 {
+impl From<ServerDeath> for u32 {
+    fn from(v: ServerDeath) -> u32 {
         u16::from(v) as u32
     }
 }
-impl TryFrom<u32> for ServerDied {
+impl TryFrom<u32> for ServerDeath {
     type Error = ();
     fn try_from(v: u32) -> Result<Self, Self::Error> {
         match v {
