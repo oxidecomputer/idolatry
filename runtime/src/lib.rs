@@ -30,26 +30,11 @@ pub enum ClientError {
 
 /// Simple return type that is used when a function can only fail due to
 /// the server dying (i.e. it will never return an error code of its own)
+///
+/// This should be used with the `ServerDeath` return type, which makes the
+/// server-side API infallible but returns `Result<T, ServerDeath>` to the
+/// client.
 pub struct ServerDeath;
-impl From<ServerDeath> for u16 {
-    fn from(_: ServerDeath) -> u16 {
-        0xDEAD
-    }
-}
-impl From<ServerDeath> for u32 {
-    fn from(v: ServerDeath) -> u32 {
-        u16::from(v) as u32
-    }
-}
-impl TryFrom<u32> for ServerDeath {
-    type Error = ();
-    fn try_from(v: u32) -> Result<Self, Self::Error> {
-        match v {
-            0xDEAD => Ok(Self),
-            _ => Err(()),
-        }
-    }
-}
 
 impl ClientError {
     pub fn into_fault(self) -> Option<ReplyFaultReason> {

@@ -109,6 +109,9 @@ pub fn generate_client_stub(
                     syntax::Error::CLike(ty) => {
                         write!(out, "{}", ty.0)?;
                     }
+                    syntax::Error::ServerDeath => {
+                        write!(out, "idol_runtime::ServerDeath")?;
+                    }
                 }
                 write!(out, ">")?;
             }
@@ -205,7 +208,7 @@ pub fn generate_client_stub(
                     }
                 }
                 match err {
-                    syntax::Error::CLike(_ty) => {
+                    syntax::Error::CLike(_) | syntax::Error::ServerDeath => {
                         writeln!(out, "            let errsize = 0;")?;
                     }
                 }
@@ -383,6 +386,21 @@ pub fn generate_client_stub(
                             ty.0
                         )?;
                         writeln!(out, "                .unwrap_lite())")?;
+                    }
+                    syntax::Error::ServerDeath => {
+                        writeln!(out, "            assert!(len == 0);")?;
+                        writeln!(
+                            out,
+                            "            if let Some(g) = userlib::extract_new_generation(rc) {{"
+                        )?;
+                        writeln!(out, "                self.current_id.set(userlib::TaskId::for_index_and_gen(task.index(), g));")?;
+                        writeln!(
+                            out,
+                            "                Err(idol_runtime::ServerDeath)"
+                        )?;
+                        writeln!(out, "            }} else {{")?;
+                        writeln!(out, "                panic!();")?;
+                        writeln!(out, "            }}")?;
                     }
                 }
                 writeln!(out, "        }}")?;
