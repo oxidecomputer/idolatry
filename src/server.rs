@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use super::{common, syntax};
+use std::collections::BTreeMap;
 use std::env;
 use std::fs::File;
 use std::io::Write;
@@ -16,6 +17,7 @@ pub fn build_server_support(
     source: &str,
     stub_name: &str,
     style: ServerStyle,
+    allowed_callers: &BTreeMap<String, Vec<String>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let mut stub_file = File::create(out.join(stub_name)).unwrap();
@@ -33,7 +35,11 @@ pub fn build_server_support(
 
     match style {
         ServerStyle::InOrder => {
-            generate_server_in_order_trait(&iface, &mut stub_file)?;
+            generate_server_in_order_trait(
+                &iface,
+                &mut stub_file,
+                allowed_callers,
+            )?;
         }
     }
 
@@ -268,6 +274,7 @@ pub fn generate_server_op_impl(
 pub fn generate_server_in_order_trait(
     iface: &syntax::Interface,
     mut out: impl Write,
+    allowed_callers: &BTreeMap<String, Vec<String>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let trt = format!("InOrder{}Impl", iface.name);
 
@@ -376,6 +383,24 @@ pub fn generate_server_in_order_trait(
     writeln!(out, "        match op {{")?;
     for (opname, op) in &iface.ops {
         writeln!(out, "            {}Operation::{} => {{", iface.name, opname)?;
+        if let Some(allowed_callers) = allowed_callers.get(opname) {
+            let tasks = allowed_callers
+                .iter()
+                .map(|name| {
+                    format!("::hubris_num_tasks::Task::{} as usize,", name)
+                })
+                .collect::<String>();
+            writeln!(
+                out,
+                "                if ![{}].contains(&rm.sender.index()) {{",
+                tasks,
+            )?;
+            writeln!(
+                out,
+                "                    return Err(idol_runtime::RequestError::Fail(idol_runtime::ClientError::AccessViolation));"
+            )?;
+            writeln!(out, "                }}")?;
+        }
         writeln!(
             out,
             "                let {}args = read_{}_msg(incoming).ok_or_else(|| ClientError::BadMessageContents.fail())?;",
