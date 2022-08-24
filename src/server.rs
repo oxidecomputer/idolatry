@@ -17,6 +17,19 @@ pub fn build_server_support(
     source: &str,
     stub_name: &str,
     style: ServerStyle,
+) -> Result<(), Box<dyn std::error::Error>> {
+    build_restricted_server_support(
+        source,
+        stub_name,
+        style,
+        &BTreeMap::new(),
+    )
+}
+
+pub fn build_restricted_server_support(
+    source: &str,
+    stub_name: &str,
+    style: ServerStyle,
     allowed_callers: &BTreeMap<String, Vec<String>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
