@@ -18,12 +18,7 @@ pub fn build_server_support(
     stub_name: &str,
     style: ServerStyle,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    build_restricted_server_support(
-        source,
-        stub_name,
-        style,
-        &BTreeMap::new(),
-    )
+    build_restricted_server_support(source, stub_name, style, &BTreeMap::new())
 }
 
 pub fn build_restricted_server_support(
@@ -397,17 +392,47 @@ pub fn generate_server_in_order_trait(
     for (opname, op) in &iface.ops {
         writeln!(out, "            {}Operation::{} => {{", iface.name, opname)?;
         if let Some(allowed_callers) = allowed_callers.get(opname) {
-            let tasks = allowed_callers
-                .iter()
-                .map(|name| {
-                    format!("::hubris_num_tasks::Task::{} as usize,", name)
-                })
-                .collect::<String>();
-            writeln!(
-                out,
-                "                if ![{}].contains(&rm.sender.index()) {{",
-                tasks,
-            )?;
+            // With our current optimization settings and rustc/llvm version,
+            // the compiler generates less code for raw `if` checks than it does
+            // for the more general `[T;N].contains(&T)`. We'll do a bit of
+            // manual optimization here; if `allowed_callers` is less than 4
+            // (which we expect it to be basically always), we'll generate a
+            // suitable `if`. For longer allowed_callers lists, we'll faill back
+            // to `.contains()`, which produces a loop.
+            if allowed_callers.len() < 4 {
+                writeln!(
+                    out,
+                    "                let sender = rm.sender.index();"
+                )?;
+                let conditions = allowed_callers
+                    .iter()
+                    .map(|name| {
+                        format!(
+                            "sender != ::hubris_num_tasks::Task::{} as usize",
+                            name
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                writeln!(
+                    out,
+                    "                if {} {{",
+                    conditions.join(" && ")
+                )?;
+            } else {
+                let allowed_task_indices = allowed_callers
+                    .iter()
+                    .map(|name| {
+                        format!("::hubris_num_tasks::Task::{} as usize,", name)
+                        //format!("::hubris_num_tasks::Task::{} as usize", name)
+                    })
+                    .collect::<String>();
+                writeln!(
+                    out,
+                    "                if ![{}].contains(&rm.sender.index()) {{",
+                    allowed_task_indices,
+                )?;
+            }
+
             writeln!(
                 out,
                 "                    return Err(idol_runtime::RequestError::Fail(idol_runtime::ClientError::AccessViolation));"
