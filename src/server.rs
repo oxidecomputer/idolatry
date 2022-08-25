@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use super::{common, syntax};
+use std::collections::BTreeMap;
 use std::env;
 use std::fs::File;
 use std::io::Write;
@@ -16,6 +17,15 @@ pub fn build_server_support(
     source: &str,
     stub_name: &str,
     style: ServerStyle,
+) -> Result<(), Box<dyn std::error::Error>> {
+    build_restricted_server_support(source, stub_name, style, &BTreeMap::new())
+}
+
+pub fn build_restricted_server_support(
+    source: &str,
+    stub_name: &str,
+    style: ServerStyle,
+    allowed_callers: &BTreeMap<String, Vec<usize>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let mut stub_file = File::create(out.join(stub_name)).unwrap();
@@ -33,7 +43,11 @@ pub fn build_server_support(
 
     match style {
         ServerStyle::InOrder => {
-            generate_server_in_order_trait(&iface, &mut stub_file)?;
+            generate_server_in_order_trait(
+                &iface,
+                &mut stub_file,
+                allowed_callers,
+            )?;
         }
     }
 
@@ -268,7 +282,19 @@ pub fn generate_server_op_impl(
 pub fn generate_server_in_order_trait(
     iface: &syntax::Interface,
     mut out: impl Write,
+    allowed_callers: &BTreeMap<String, Vec<usize>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Ensure any operations listed in `allowed_callers` actually exist for this
+    // server.
+    for opname in allowed_callers.keys() {
+        if !iface.ops.contains_key(opname) {
+            return Err(Box::from(format!(
+                "allowed_callers operation `{}` does not exist for this server",
+                opname
+            )));
+        }
+    }
+
     let trt = format!("InOrder{}Impl", iface.name);
 
     writeln!(out, "pub trait {} {{", trt)?;
@@ -374,8 +400,49 @@ pub fn generate_server_in_order_trait(
     writeln!(out, "        use core::convert::TryInto;")?;
     writeln!(out, "        use idol_runtime::ClientError;")?;
     writeln!(out, "        match op {{")?;
+
     for (opname, op) in &iface.ops {
         writeln!(out, "            {}Operation::{} => {{", iface.name, opname)?;
+        if let Some(allowed_callers) = allowed_callers.get(opname) {
+            // With our current optimization settings and rustc/llvm version,
+            // the compiler generates better code for raw `if` checks than it
+            // does for the more general `[T;N].contains(&T)`. We'll do a bit of
+            // manual optimization here; if `allowed_callers` is less than 4
+            // (which we expect it to be basically always), we'll generate a
+            // suitable `if`. For longer allowed_callers lists, we'll fall back
+            // to `[T;N].contains(&T)`, which produces a loop.
+            if allowed_callers.len() < 4 {
+                writeln!(
+                    out,
+                    "                let sender = rm.sender.index();"
+                )?;
+                let conditions = allowed_callers
+                    .iter()
+                    .map(|task_id| format!("sender != {}", task_id))
+                    .collect::<Vec<_>>();
+                writeln!(
+                    out,
+                    "                if {} {{",
+                    conditions.join(" && ")
+                )?;
+            } else {
+                let allowed_task_indices = allowed_callers
+                    .iter()
+                    .map(|task_id| format!("{},", task_id))
+                    .collect::<String>();
+                writeln!(
+                    out,
+                    "                if ![{}].contains(&rm.sender.index()) {{",
+                    allowed_task_indices,
+                )?;
+            }
+
+            writeln!(
+                out,
+                "                    return Err(idol_runtime::RequestError::Fail(idol_runtime::ClientError::AccessViolation));"
+            )?;
+            writeln!(out, "                }}")?;
+        }
         writeln!(
             out,
             "                let {}args = read_{}_msg(incoming).ok_or_else(|| ClientError::BadMessageContents.fail())?;",

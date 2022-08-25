@@ -23,6 +23,7 @@ pub enum ClientError {
     BadMessageContents = 0xFFFF_FE04,
     BadLease = 0xFFFF_FE02,
     ReplyBufferTooSmall = 0xFFFF_FE05,
+    AccessViolation = 0xFFFF_FE06,
 
     /// no parallel
     WentAway = 0xFFFF_FE03,
@@ -50,6 +51,7 @@ impl ClientError {
             Self::ReplyBufferTooSmall => {
                 Some(ReplyFaultReason::ReplyBufferTooSmall)
             }
+            Self::AccessViolation => Some(ReplyFaultReason::AccessViolation),
 
             // Don't fault clients that just got restarted. (Wouldn't work
             // anyway.)

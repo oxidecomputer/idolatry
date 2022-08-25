@@ -12,7 +12,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     idol::common::generate_op_enum(&iface, &mut out)?;
     idol::server::generate_server_op_impl(&iface, &mut out)?;
 
-    idol::server::generate_server_in_order_trait(&iface, &mut out)?;
+    idol::server::generate_server_in_order_trait(
+        &iface,
+        &mut out,
+        &Default::default(),
+    )?;
 
     Ok(())
 }
