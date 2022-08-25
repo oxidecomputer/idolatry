@@ -25,7 +25,7 @@ pub fn build_restricted_server_support(
     source: &str,
     stub_name: &str,
     style: ServerStyle,
-    allowed_callers: &BTreeMap<String, Vec<String>>,
+    allowed_callers: &BTreeMap<String, Vec<usize>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let mut stub_file = File::create(out.join(stub_name)).unwrap();
@@ -282,7 +282,7 @@ pub fn generate_server_op_impl(
 pub fn generate_server_in_order_trait(
     iface: &syntax::Interface,
     mut out: impl Write,
-    allowed_callers: &BTreeMap<String, Vec<String>>,
+    allowed_callers: &BTreeMap<String, Vec<usize>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Ensure any operations listed in `allowed_callers` actually exist for this
     // server.
@@ -401,19 +401,15 @@ pub fn generate_server_in_order_trait(
     writeln!(out, "        use idol_runtime::ClientError;")?;
     writeln!(out, "        match op {{")?;
 
-    let mut hubris_tasks_ids = HubrisTasks::default();
     for (opname, op) in &iface.ops {
         writeln!(out, "            {}Operation::{} => {{", iface.name, opname)?;
         if let Some(allowed_callers) = allowed_callers.get(opname) {
-            let allowed_callers =
-                hubris_tasks_ids.names_to_indices(allowed_callers)?;
-
             // With our current optimization settings and rustc/llvm version,
             // the compiler generates better code for raw `if` checks than it
             // does for the more general `[T;N].contains(&T)`. We'll do a bit of
             // manual optimization here; if `allowed_callers` is less than 4
             // (which we expect it to be basically always), we'll generate a
-            // suitable `if`. For longer allowed_callers lists, we'll faill back
+            // suitable `if`. For longer allowed_callers lists, we'll fall back
             // to `[T;N].contains(&T)`, which produces a loop.
             if allowed_callers.len() < 4 {
                 writeln!(
@@ -623,56 +619,4 @@ static _{}_IDOL_DEFINITION: [u8; {}] = ["##,
     writeln!(out, "\n];\n")?;
 
     Ok(())
-}
-
-#[derive(Default)]
-struct HubrisTasks {
-    name_to_index: Option<Result<BTreeMap<String, usize>, &'static str>>,
-}
-
-impl HubrisTasks {
-    // The first time we're called, parse env::var("HUBRIS_TASKS") and cache the
-    // result. Subsequent calls return the cached result.
-    fn read_from_env_cached(
-        &mut self,
-    ) -> Result<&BTreeMap<String, usize>, Box<dyn std::error::Error>> {
-        fn read_from_env() -> Result<BTreeMap<String, usize>, &'static str> {
-            println!("cargo:rerun-if-env-changed=HUBRIS_TASKS");
-            let tasks = env::var("HUBRIS_TASKS")
-                .map_err(|_| "HUBRIS_TASKS environment variable not present")?;
-            let tasks = tasks
-                .split(',')
-                .enumerate()
-                .map(|(i, name)| (name.to_string(), i))
-                .collect();
-            Ok(tasks)
-        }
-
-        self.name_to_index
-            .get_or_insert_with(read_from_env)
-            .as_ref()
-            .map_err(|&s| Box::from(s))
-    }
-
-    // Convert a list of task names to indices via the `HUBRIS_TASKS`
-    // environment variable. Assumes the ordering of task names in
-    // `HUBRIS_TASKS` matches their indices, as used by hubris's `sys/num_tasks`
-    // build script.
-    fn names_to_indices(
-        &mut self,
-        names: &[String],
-    ) -> Result<Vec<usize>, Box<dyn std::error::Error>> {
-        let name_to_index_map = self.read_from_env_cached()?;
-        names
-            .iter()
-            .map(|name| {
-                name_to_index_map.get(name).copied().ok_or_else(|| {
-                    Box::from(format!(
-                        "task name `{}` not present in HUBRIS_TASKS",
-                        name
-                    ))
-                })
-            })
-            .collect()
-    }
 }
