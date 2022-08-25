@@ -284,6 +284,17 @@ pub fn generate_server_in_order_trait(
     mut out: impl Write,
     allowed_callers: &BTreeMap<String, Vec<String>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Ensure any operations listed in `allowed_callers` actually exist for this
+    // server.
+    for opname in allowed_callers.keys() {
+        if !iface.ops.contains_key(opname) {
+            return Err(Box::from(format!(
+                "allowed_callers operation `{}` does not exist for this server",
+                opname
+            )));
+        }
+    }
+
     let trt = format!("InOrder{}Impl", iface.name);
 
     writeln!(out, "pub trait {} {{", trt)?;
