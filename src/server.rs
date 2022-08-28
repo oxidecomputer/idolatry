@@ -235,6 +235,33 @@ pub fn generate_server_conversions(
                 writeln!(out, "}}")?;
             }
         }
+
+        // The DWARF generated for types is load-bearing in that Humility
+        // potentially needs them to be able to form arguments to Idol calls
+        // and to make sense of the reply.  But if an Idol server is declared
+        // without a consuming Idol client, any synthetic reply type won't be
+        // generated.  To force any synthetic reply type definition to be
+        // generated, we create a meaningless static (that itself will be
+        // optimized away), which has the side-effect of getting the type that
+        // we need in the binary (but without changing the generated text or
+        // data).
+        if let syntax::Reply::Result { ok, err: _ } = &op.reply {
+            if let syntax::Encoding::Zerocopy = op.encoding {
+                let reply_ty = format!("{}_{}_REPLY", iface.name, name);
+                writeln!(out, "#[repr(C, packed)]")?;
+                writeln!(out, "struct {} {{", reply_ty)?;
+                writeln!(out, "    value: {},", ok.repr_ty())?;
+                writeln!(out, "}}\n")?;
+
+                writeln!(out, "#[allow(dead_code)]")?;
+                writeln!(
+                    out,
+                    "static {}: Option<&{}> = None;",
+                    reply_ty.to_uppercase(),
+                    reply_ty
+                )?;
+            }
+        }
     }
 
     Ok(())
