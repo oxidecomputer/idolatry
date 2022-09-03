@@ -277,7 +277,7 @@ pub fn generate_client_stub(
             };
             writeln!(
                 out,
-                "                userlib::Lease::{}(arg_{}),",
+                "                userlib::Lease::{}(zerocopy::AsBytes::as_bytes(arg_{})),",
                 ctor, leasename
             )?;
         }
