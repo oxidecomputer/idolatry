@@ -119,6 +119,8 @@ pub fn generate_server_constants(
         upper_names.push(upper_name);
     }
 
+    // `max_incoming_size` may compare `max < 0`, which we want to ignore
+    writeln!(out, "#[allow(clippy::absurd_extreme_comparisons)]")?;
     writeln!(out, "const fn max_incoming_size() -> usize {{")?;
     writeln!(out, "    let mut max = 0;")?;
     for un in upper_names {
