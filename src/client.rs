@@ -273,16 +273,16 @@ pub fn generate_client_stub(
         writeln!(out, "            &mut reply,")?;
         writeln!(out, "            &[")?;
         for (leasename, lease) in &op.leases {
-            let ctor = match (lease.read, lease.write) {
-                (true, true) => "read_write",
-                (false, true) => "write_only",
-                (true, false) => "read_only",
+            let (ctor, asbytes) = match (lease.read, lease.write) {
+                (true, true) => ("read_write", "as_bytes_mut"),
+                (false, true) => ("write_only", "as_bytes_mut"),
+                (true, false) => ("read_only", "as_bytes"),
                 (false, false) => panic!("should have been caught above"),
             };
             writeln!(
                 out,
-                "                userlib::Lease::{}(arg_{}),",
-                ctor, leasename
+                "                userlib::Lease::{}(zerocopy::AsBytes::{}(arg_{})),",
+                ctor, asbytes, leasename
             )?;
         }
         writeln!(out, "            ],")?;
