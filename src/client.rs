@@ -121,7 +121,9 @@ pub fn generate_client_stub(
                 write!(out, ">")?;
             }
             syntax::Reply::Simple(t) => {
-                write!(out, " -> {}", t.display())?;
+                if t.ty.0 != "()" {
+                    write!(out, " -> {}", t.display())?;
+                }
             }
         }
         writeln!(out, " {{")?;
