@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 userlib = {git = "https://github.com/oxidecomputer/hubris"}
 zerocopy = "0.6.1"
+idol-types = {path = "../types"}

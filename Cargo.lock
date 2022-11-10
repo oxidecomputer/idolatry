@@ -70,8 +70,16 @@ dependencies = [
 name = "idol-runtime"
 version = "0.1.0"
 dependencies = [
+ "idol-types",
  "userlib",
  "zerocopy",
+]
+
+[[package]]
+name = "idol-types"
+version = "0.1.0"
+dependencies = [
+ "abi",
 ]
 
 [[package]]

@@ -1,0 +1,7 @@
+[package]
+name = "idol-types"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+abi = { git = "https://github.com/oxidecomputer/hubris" }

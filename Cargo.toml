@@ -13,4 +13,4 @@ indexmap = {version = "1.7", features = ["serde-1"]}
 quote = "1.0"
 
 [workspace]
-members = ["runtime"]
+members = ["runtime", "types"]
