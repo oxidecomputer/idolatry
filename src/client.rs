@@ -81,12 +81,27 @@ pub fn generate_client_stub(
             if op.leases.values().any(|lease| lease.read && lease.write) {
                 return Err("idempotent operation with read/write lease".into());
             }
+            match &op.reply {
+                syntax::Reply::Result { err, .. }
+                    if matches!(err, syntax::Error::ServerDeath) =>
+                {
+                    return Err(
+                        format!("idempotent operations should not indicate server death: {}", name)
+                            .into(),
+                    );
+                }
+                _ => (),
+            }
         } else {
             // A non-idempotent operation had better have an error type.
             match &op.reply {
                 syntax::Reply::Result { .. } => (),
                 syntax::Reply::Simple(_) => {
-                    return Err("operation can't indicate server death".into());
+                    return Err(format!(
+                        "operation can't indicate server death: {}",
+                        name
+                    )
+                    .into());
                 }
             }
         }
@@ -408,6 +423,7 @@ pub fn generate_client_stub(
                         writeln!(out, "                .unwrap_lite());")?;
                     }
                     syntax::Error::ServerDeath => {
+                        assert!(!op.idempotent, "idempotent operations should not indicate server death");
                         writeln!(
                             out,
                             "            if let Some(g) = userlib::extract_new_generation(rc) {{"
