@@ -319,8 +319,7 @@ pub fn generate_client_stub(
 
         match &op.reply {
             syntax::Reply::Simple(t) => {
-                //writeln!(out, "        if rc != 0 {{ panic!(); }}")?;
-                writeln!(out, "        let _rc = rc;")?;
+                writeln!(out, "        if rc != 0 {{ panic!(); }}")?;
                 match op.encoding {
                     syntax::Encoding::Zerocopy => {
                         writeln!(out, "        let _len = len;")?;
