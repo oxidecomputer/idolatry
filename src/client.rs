@@ -408,12 +408,16 @@ pub fn generate_client_stub(
                 writeln!(out, "        }} else {{")?;
                 match err {
                     syntax::Error::CLike(ty) => {
-                        writeln!(
-                            out,
-                            "            if let Some(g) = userlib::extract_new_generation(rc) {{"
-                        )?;
-                        writeln!(out, "                self.current_id.set(userlib::TaskId::for_index_and_gen(task.index(), g));")?;
-                        writeln!(out, "            }}")?;
+                        if !op.idempotent {
+                            // Idempotent ops already checked for server death
+                            // above.
+                            writeln!(
+                                out,
+                                "            if let Some(g) = userlib::extract_new_generation(rc) {{"
+                            )?;
+                            writeln!(out, "                self.current_id.set(userlib::TaskId::for_index_and_gen(task.index(), g));")?;
+                            writeln!(out, "            }}")?;
+                        }
                         writeln!(
                             out,
                             "            return Err(<{} as core::convert::TryFrom<u32>>::try_from(rc)",
