@@ -86,7 +86,7 @@ pub fn generate_client_stub(
                     if matches!(err, syntax::Error::ServerDeath) =>
                 {
                     return Err(
-                        format!("idempotent operations should not indicate server death: {}", name)
+                        format!("idempotent operations should not indicate server death: {name}")
                             .into(),
                     );
                 }
@@ -98,8 +98,7 @@ pub fn generate_client_stub(
                 syntax::Reply::Result { .. } => (),
                 syntax::Reply::Simple(_) => {
                     return Err(format!(
-                        "operation can't indicate server death: {}",
-                        name
+                        "operation can't indicate server death: {name}",
                     )
                     .into());
                 }
