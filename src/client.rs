@@ -181,6 +181,9 @@ pub fn generate_client_stub(
             syntax::Encoding::Ssmarshal => {
                 writeln!(out, "        #[derive(serde::Serialize)]")?;
             }
+            syntax::Encoding::Hubpack => {
+                writeln!(out, "        #[derive(serde::Serialize, hubpack::SerializedSize)]")?;
+            }
         }
         writeln!(out, "        struct {}_{}_ARGS {{", iface.name, name)?;
         for (argname, arg) in &op.args {
@@ -211,6 +214,9 @@ pub fn generate_client_stub(
                             t.display()
                         )?;
                     }
+                    syntax::Encoding::Hubpack => {
+                        writeln!(out, "            <{} as hubpack::SerializedSize>::MAX_SIZE", t.display())?;
+                    }
                 }
             }
             syntax::Reply::Result { ok, err } => {
@@ -222,6 +228,13 @@ pub fn generate_client_stub(
                         writeln!(
                             out,
                             "            let oksize = core::mem::size_of::<{}>();",
+                            ok.display()
+                        )?;
+                    }
+                    syntax::Encoding::Hubpack => {
+                        writeln!(
+                            out,
+                            "            let oksize = <{} as hubpack::SerializedSize>::MAX_SIZE;",
                             ok.display()
                         )?;
                     }
@@ -264,6 +277,11 @@ pub fn generate_client_stub(
                 writeln!(out, "        let mut argsbuf = [0; core::mem::size_of::<{}_{}_ARGS>()];", iface.name, name)?;
                 writeln!(out, "        let arglen = ssmarshal::serialize(&mut argsbuf, &args).unwrap_lite();")?;
             }
+            syntax::Encoding::Hubpack => {
+                // Serialize the arguments.
+                writeln!(out, "        let mut argsbuf = [0; <{}_{}_ARGS as hubpack::SerializedSize>::MAX_SIZE];", iface.name, name)?;
+                writeln!(out, "        let arglen = hubpack::serialize(&mut argsbuf, &args).unwrap_lite();")?;
+            }
         }
         // Create reply buffer.
         writeln!(out, "        let mut reply = [0u8; REPLY_SIZE];")?;
@@ -286,7 +304,7 @@ pub fn generate_client_stub(
                     "            zerocopy::AsBytes::as_bytes(&args),"
                 )?;
             }
-            syntax::Encoding::Ssmarshal => {
+            syntax::Encoding::Ssmarshal | syntax::Encoding::Hubpack => {
                 writeln!(out, "            &argsbuf[..arglen],")?;
             }
         }
@@ -339,6 +357,9 @@ pub fn generate_client_stub(
                     syntax::Encoding::Ssmarshal => {
                         writeln!(out, "        let (v, _): ({}, _) = ssmarshal::deserialize(&reply[..len]).unwrap_lite();", t.repr_ty())?;
                     }
+                    syntax::Encoding::Hubpack => {
+                        writeln!(out, "        let (v, _): ({}, _) = hubpack::deserialize(&reply[..len]).unwrap_lite();", t.repr_ty())?;
+                    }
                 }
                 match &t.recv {
                     syntax::RecvStrategy::FromBytes => {
@@ -383,6 +404,9 @@ pub fn generate_client_stub(
                     }
                     syntax::Encoding::Ssmarshal => {
                         writeln!(out, "            let (v, _): ({}, _) = ssmarshal::deserialize(&reply[..len]).unwrap_lite();", ok.repr_ty())?;
+                    }
+                    syntax::Encoding::Hubpack => {
+                        writeln!(out, "            let (v, _): ({}, _) = hubpack::deserialize(&reply[..len]).unwrap_lite();", ok.repr_ty())?;
                     }
                 }
                 match &ok.recv {
