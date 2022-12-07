@@ -91,19 +91,36 @@ pub fn generate_server_constants(
                     iface.name, name
                 )?;
             }
+
+            // hubpack's SerializedSize traits defines a `MAX_SIZE` associated
+            // constant
+            syntax::Encoding::Hubpack => {
+                writeln!(
+                    out,
+                    "\n    <{}_{}_ARGS as hubpack::SerializedSize>::MAX_SIZE;",
+                    iface.name, name
+                )?;
+            }
         }
 
         write!(out, "pub const {}_REPLY_SIZE: usize =", upper_name)?;
         match &op.reply {
             syntax::Reply::Result { ok, .. } => {
+                // This strategy only uses bytes for the OK side of the type,
+                // and only sends one type, so:
                 match op.encoding {
                     syntax::Encoding::Zerocopy
                     | syntax::Encoding::Ssmarshal => {
-                        // This strategy only uses bytes for the OK side of the type,
-                        // and only sends one type, so:
                         writeln!(
                             out,
                             "core::mem::size_of::<{}>();",
+                            ok.display()
+                        )?;
+                    }
+                    syntax::Encoding::Hubpack => {
+                        writeln!(
+                            out,
+                            "<{} as hubpack::SerializedSize>::MAX_SIZE;",
                             ok.display()
                         )?;
                     }
@@ -112,6 +129,13 @@ pub fn generate_server_constants(
             syntax::Reply::Simple(t) => match op.encoding {
                 syntax::Encoding::Zerocopy | syntax::Encoding::Ssmarshal => {
                     writeln!(out, "core::mem::size_of::<{}>();", t.display())?;
+                }
+                syntax::Encoding::Hubpack => {
+                    writeln!(
+                        out,
+                        "<{} as hubpack::SerializedSize>::MAX_SIZE;",
+                        t.display()
+                    )?;
                 }
             },
         }
@@ -151,6 +175,9 @@ pub fn generate_server_conversions(
             }
             syntax::Encoding::Ssmarshal => {
                 writeln!(out, "#[derive(Copy, Clone, serde::Deserialize)]")?;
+            }
+            syntax::Encoding::Hubpack => {
+                writeln!(out, "#[derive(Copy, Clone, serde::Deserialize, hubpack::SerializedSize)]")?;
             }
         }
         writeln!(out, "pub struct {}_{}_ARGS {{", iface.name, name)?;
@@ -233,6 +260,16 @@ pub fn generate_server_conversions(
                 writeln!(
                     out,
                     "    ssmarshal::deserialize(bytes).ok().map(|(x, _)| x)"
+                )?;
+                writeln!(out, "}}")?;
+            }
+            syntax::Encoding::Hubpack => {
+                writeln!(out, "pub fn read_{}_msg(bytes: &[u8])", name)?;
+                writeln!(out, "    -> Option<{}_{}_ARGS>", iface.name, name)?;
+                writeln!(out, "{{")?;
+                writeln!(
+                    out,
+                    "    hubpack::deserialize(bytes).ok().map(|(x, _)| x)"
                 )?;
                 writeln!(out, "}}")?;
             }
@@ -564,6 +601,12 @@ pub fn generate_server_in_order_trait(
                         writeln!(out, "                        let n_reply = ssmarshal::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap_lite();")?;
                         writeln!(out, "                        userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);")?;
                     }
+                    syntax::Encoding::Hubpack => {
+                        writeln!(out, "                        let mut reply_buf = [0u8; {}_REPLY_SIZE];",
+                            opname.to_uppercase())?;
+                        writeln!(out, "                        let n_reply = hubpack::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap_lite();")?;
+                        writeln!(out, "                        userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);")?;
+                    }
                 }
                 writeln!(out, "                        Ok(())")?;
                 writeln!(out, "                    }}")?;
@@ -583,6 +626,12 @@ pub fn generate_server_in_order_trait(
                         writeln!(out, "                        let mut reply_buf = [0u8; {}_REPLY_SIZE];",
                             opname.to_uppercase())?;
                         writeln!(out, "                        let n_reply = ssmarshal::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap_lite();")?;
+                        writeln!(out, "                        userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);")?;
+                    }
+                    syntax::Encoding::Hubpack => {
+                        writeln!(out, "                        let mut reply_buf = [0u8; {}_REPLY_SIZE];",
+                            opname.to_uppercase())?;
+                        writeln!(out, "                        let n_reply = hubpack::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap_lite();")?;
                         writeln!(out, "                        userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);")?;
                     }
                 }

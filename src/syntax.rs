@@ -90,8 +90,13 @@ pub enum Encoding {
     /// cheapest but won't work for complex types.
     Zerocopy,
     /// Encode types using the `ssmarshal` codec for `serde`. This can transfer
-    /// arbitrarily complex Rust types.
+    /// complex Rust types, but has strict rules about the formation of those
+    /// types that are _not_ checked at compile time. Prefer `Hubpack`.
     Ssmarshal,
+    /// Encode types using the `hubpack` codec for `serde`. This can transfer
+    /// complex Rust types. It has strict rules about the formation of those
+    /// types, but all those rules are checked at compile time.
+    Hubpack,
 }
 
 impl Default for Encoding {
