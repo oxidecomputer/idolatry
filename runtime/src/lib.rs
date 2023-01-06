@@ -29,6 +29,15 @@ pub enum ClientError {
     WentAway = 0xFFFF_FE03,
 }
 
+/// Marker trait indicating an error type is able to represent server death.
+///
+/// This should be implemented on error types used in non-idempotent operations,
+/// indicating that they are capable of handling server death, usually by
+/// including a corresponding variant. In rarer cases, an error type with no
+/// such variant may still implement this trait if it intends to cause the
+/// client to panic if the server dies.
+pub trait IHaveConsideredServerDeathWithThisErrorType {}
+
 /// Simple return type that is used when a function can only fail due to
 /// the server dying (i.e. it will never return an error code of its own)
 ///
