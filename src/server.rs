@@ -409,6 +409,7 @@ pub fn generate_server_in_order_trait(
         }
         write!(out, ")")?;
 
+        let mut error_type_bounds = None;
         match &op.reply {
             syntax::Reply::Result { ok, err } => {
                 write!(
@@ -419,6 +420,16 @@ pub fn generate_server_in_order_trait(
                 match err {
                     syntax::Error::CLike(ty) => {
                         write!(out, "{}", ty.0)?;
+
+                        // For non-idempotent operations, generate a bound on
+                        // the error type ensuring it can represent server
+                        // death.
+                        if !op.idempotent {
+                            error_type_bounds = Some(format!(
+                                "where {}: idol_runtime::IHaveConsideredServerDeathWithThisErrorType",
+                                ty.0,
+                            ));
+                        }
                     }
                     syntax::Error::ServerDeath => {
                         write!(out, " core::convert::Infallible")?;
@@ -433,6 +444,10 @@ pub fn generate_server_in_order_trait(
                     t.display()
                 )?;
             }
+        }
+
+        if let Some(error_type_bounds) = error_type_bounds {
+            write!(out, " {error_type_bounds}")?;
         }
         writeln!(out, ";")?;
         writeln!(out)?;
