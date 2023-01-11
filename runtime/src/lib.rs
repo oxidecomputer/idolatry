@@ -929,3 +929,133 @@ impl<A: AttributeWrite, const N: usize> Drop for LeaseBufWriter<A, N> {
         self.flush().ok();
     }
 }
+
+/// Abstraction over a buffer that reads bytes
+///
+/// This allows us to write code that's generic across both local slices and
+/// borrowed leases.
+pub trait BufReader<'a> {
+    /// Returns the size of the underlying buffer
+    fn len(&self) -> usize;
+
+    /// Reads a single byte, incrementing the internal position and returning
+    /// `None` if we're at the end of the buffer
+    fn read(&mut self) -> Option<u8>;
+}
+
+impl<'a, const N: usize> BufReader<'a> for LeaseBufReader<R, N> {
+    fn len(&self) -> usize {
+        self.lease.len()
+    }
+    fn read(&mut self) -> Option<u8> {
+        LeaseBufReader::read(self)
+    }
+}
+
+/// Wrapper around a slice, implementing [`BufReader`]
+pub struct SliceBufReader<'a> {
+    data: &'a [u8],
+    index: usize,
+}
+
+impl<'a> BufReader<'a> for SliceBufReader<'a> {
+    fn len(&self) -> usize {
+        self.data.len()
+    }
+    fn read(&mut self) -> Option<u8> {
+        let out = self.data.get(self.index).cloned();
+        self.index += 1;
+        out
+    }
+}
+
+impl<'a> From<&'a [u8]> for SliceBufReader<'a> {
+    fn from(data: &'a [u8]) -> Self {
+        SliceBufReader { data, index: 0 }
+    }
+}
+
+/// Abstraction over a buffer that accepts bytes
+///
+/// This allows us to write code that targets both local mutable slices and
+/// borrowed leases.
+pub trait BufWriter<'a> {
+    /// Returns the size of the underlying buffer
+    fn len(&self) -> usize;
+
+    /// Writes a single byte to the buffer, incrementing the internal position
+    /// and returning `Err(())` if we've reached the end.
+    fn write(&mut self, v: u8) -> Result<(), ()>;
+}
+
+impl<'a, const BUFSIZ: usize> BufWriter<'a> for LeaseBufWriter<W, BUFSIZ> {
+    fn write(&mut self, v: u8) -> Result<(), ()> {
+        LeaseBufWriter::write(self, v)
+    }
+    fn len(&self) -> usize {
+        self.lease.len()
+    }
+}
+
+/// Wrapper around a slice which implements [`BufWriter`]
+pub struct SliceBufWriter<'a> {
+    data: &'a mut [u8],
+    index: usize,
+}
+
+impl<'a> BufWriter<'a> for SliceBufWriter<'a> {
+    fn write(&mut self, v: u8) -> Result<(), ()> {
+        match self.data.get_mut(self.index) {
+            Some(d) => {
+                *d = v;
+                self.index += 1;
+                Ok(())
+            }
+            None => Err(()),
+        }
+    }
+    fn len(&self) -> usize {
+        self.data.len()
+    }
+}
+
+impl<'a> From<&'a mut [u8]> for SliceBufWriter<'a> {
+    fn from(data: &'a mut [u8]) -> Self {
+        SliceBufWriter { data, index: 0 }
+    }
+}
+
+/// A `Lease` with an attached size hint for `LeaseBufReader/Writer`
+///
+/// This allows us to write functions that work on either slices or leases!
+///
+/// Such a function should be generic across `R: BufReader, B: Into<R>`,
+/// with either
+///
+/// - `R` is `SliceBufReader`, `B` is `&[u8]`
+/// - `R` is `LeaseBufReader<BUFSIZ>`, `B` is `BufSizeHint<R, BUFSIZ>`
+///
+/// (and the same for `BufWriter`)
+pub struct BufSizeHint<A: Attribute, const B: usize>(Leased<A, [u8]>);
+
+impl<A: Attribute, const B: usize> From<Leased<A, [u8]>> for BufSizeHint<A, B> {
+    fn from(lease: Leased<A, [u8]>) -> Self {
+        Self(lease)
+    }
+}
+
+impl<'a, A: AttributeRead, const BUFSIZ: usize> From<BufSizeHint<A, BUFSIZ>>
+    for LeaseBufReader<A, BUFSIZ>
+{
+    fn from(lease: BufSizeHint<A, BUFSIZ>) -> Self {
+        LeaseBufReader::from(lease.0)
+    }
+}
+
+impl<'a, A: AttributeWrite, const BUFSIZ: usize> From<BufSizeHint<A, BUFSIZ>>
+    for LeaseBufWriter<A, BUFSIZ>
+{
+    fn from(lease: BufSizeHint<A, BUFSIZ>) -> Self {
+        LeaseBufWriter::from(lease.0)
+    }
+}
