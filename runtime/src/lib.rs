@@ -935,8 +935,8 @@ impl<A: AttributeWrite, const N: usize> Drop for LeaseBufWriter<A, N> {
 /// This allows us to write code that's generic across both local slices and
 /// borrowed leases.
 pub trait BufReader<'a> {
-    /// Returns the size of the underlying buffer
-    fn len(&self) -> usize;
+    /// Returns the amount of remaining data in the underlying buffer
+    fn remaining_size(&self) -> usize;
 
     /// Reads a single byte, incrementing the internal position and returning
     /// `None` if we're at the end of the buffer
@@ -944,34 +944,22 @@ pub trait BufReader<'a> {
 }
 
 impl<'a, const N: usize> BufReader<'a> for LeaseBufReader<R, N> {
-    fn len(&self) -> usize {
-        self.lease.len()
+    fn remaining_size(&self) -> usize {
+        self.lease.len() - self.pos
     }
     fn read(&mut self) -> Option<u8> {
         LeaseBufReader::read(self)
     }
 }
 
-/// Wrapper around a slice, implementing [`BufReader`]
-pub struct SliceBufReader<'a> {
-    data: &'a [u8],
-    index: usize,
-}
-
-impl<'a> BufReader<'a> for SliceBufReader<'a> {
-    fn len(&self) -> usize {
-        self.data.len()
+impl<'a> BufReader<'a> for &'a [u8] {
+    fn remaining_size(&self) -> usize {
+        self.len()
     }
     fn read(&mut self) -> Option<u8> {
-        let out = self.data.get(self.index).cloned();
-        self.index += 1;
-        out
-    }
-}
-
-impl<'a> From<&'a [u8]> for SliceBufReader<'a> {
-    fn from(data: &'a [u8]) -> Self {
-        SliceBufReader { data, index: 0 }
+        let (v, next) = self.split_first()?;
+        *self = next;
+        Some(*v)
     }
 }
 
@@ -981,7 +969,7 @@ impl<'a> From<&'a [u8]> for SliceBufReader<'a> {
 /// borrowed leases.
 pub trait BufWriter<'a> {
     /// Returns the size of the underlying buffer
-    fn len(&self) -> usize;
+    fn remaining_size(&self) -> usize;
 
     /// Writes a single byte to the buffer, incrementing the internal position
     /// and returning `Err(())` if we've reached the end.
@@ -992,35 +980,22 @@ impl<'a, const BUFSIZ: usize> BufWriter<'a> for LeaseBufWriter<W, BUFSIZ> {
     fn write(&mut self, v: u8) -> Result<(), ()> {
         LeaseBufWriter::write(self, v)
     }
-    fn len(&self) -> usize {
-        self.lease.len()
+    fn remaining_size(&self) -> usize {
+        self.lease.len() - self.pos
     }
 }
 
-/// Wrapper around a slice which implements [`BufWriter`]
-pub struct SliceBufWriter<'a> {
-    data: &'a mut [u8],
-    index: usize,
-}
-
-impl<'a> BufWriter<'a> for SliceBufWriter<'a> {
+impl<'a> BufWriter<'a> for &'a mut [u8] {
     fn write(&mut self, v: u8) -> Result<(), ()> {
-        match self.data.get_mut(self.index) {
-            Some(d) => {
-                *d = v;
-                self.index += 1;
-                Ok(())
-            }
-            None => Err(()),
-        }
+        // We have to get a little sneaky to work around variance checks,
+        // because self is a &'b &'a mut [u8]
+        let real = core::mem::replace(self, &mut []);
+        let (d, next) = real.split_first_mut().ok_or(())?;
+        *d = v;
+        *self = next;
+        Ok(())
     }
-    fn len(&self) -> usize {
-        self.data.len()
-    }
-}
-
-impl<'a> From<&'a mut [u8]> for SliceBufWriter<'a> {
-    fn from(data: &'a mut [u8]) -> Self {
-        SliceBufWriter { data, index: 0 }
+    fn remaining_size(&self) -> usize {
+        self.len()
     }
 }
