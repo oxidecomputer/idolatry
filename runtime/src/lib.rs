@@ -929,3 +929,73 @@ impl<A: AttributeWrite, const N: usize> Drop for LeaseBufWriter<A, N> {
         self.flush().ok();
     }
 }
+
+/// Abstraction over a buffer that reads bytes
+///
+/// This allows us to write code that's generic across both local slices and
+/// borrowed leases.
+pub trait BufReader<'a> {
+    /// Returns the amount of remaining data in the underlying buffer
+    fn remaining_size(&self) -> usize;
+
+    /// Reads a single byte, incrementing the internal position and returning
+    /// `None` if we're at the end of the buffer
+    fn read(&mut self) -> Option<u8>;
+}
+
+impl<'a, const N: usize> BufReader<'a> for LeaseBufReader<R, N> {
+    fn remaining_size(&self) -> usize {
+        self.lease.len() - self.pos
+    }
+    fn read(&mut self) -> Option<u8> {
+        LeaseBufReader::read(self)
+    }
+}
+
+impl<'a> BufReader<'a> for &'a [u8] {
+    fn remaining_size(&self) -> usize {
+        self.len()
+    }
+    fn read(&mut self) -> Option<u8> {
+        let (v, next) = self.split_first()?;
+        *self = next;
+        Some(*v)
+    }
+}
+
+/// Abstraction over a buffer that accepts bytes
+///
+/// This allows us to write code that targets both local mutable slices and
+/// borrowed leases.
+pub trait BufWriter<'a> {
+    /// Returns the size of the underlying buffer
+    fn remaining_size(&self) -> usize;
+
+    /// Writes a single byte to the buffer, incrementing the internal position
+    /// and returning `Err(())` if we've reached the end.
+    fn write(&mut self, v: u8) -> Result<(), ()>;
+}
+
+impl<'a, const BUFSIZ: usize> BufWriter<'a> for LeaseBufWriter<W, BUFSIZ> {
+    fn write(&mut self, v: u8) -> Result<(), ()> {
+        LeaseBufWriter::write(self, v)
+    }
+    fn remaining_size(&self) -> usize {
+        self.lease.len() - self.pos
+    }
+}
+
+impl<'a> BufWriter<'a> for &'a mut [u8] {
+    fn write(&mut self, v: u8) -> Result<(), ()> {
+        // We have to get a little sneaky to work around variance checks,
+        // because self is a &'b &'a mut [u8]
+        let real = core::mem::replace(self, &mut []);
+        let (d, next) = real.split_first_mut().ok_or(())?;
+        *d = v;
+        *self = next;
+        Ok(())
+    }
+    fn remaining_size(&self) -> usize {
+        self.len()
+    }
+}
