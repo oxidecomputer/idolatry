@@ -1024,38 +1024,3 @@ impl<'a> From<&'a mut [u8]> for SliceBufWriter<'a> {
         SliceBufWriter { data, index: 0 }
     }
 }
-
-/// A `Lease` with an attached size hint for `LeaseBufReader/Writer`
-///
-/// This allows us to write functions that work on either slices or leases!
-///
-/// Such a function should be generic across `R: BufReader, B: Into<R>`,
-/// with either
-///
-/// - `R` is `SliceBufReader`, `B` is `&[u8]`
-/// - `R` is `LeaseBufReader<BUFSIZ>`, `B` is `BufSizeHint<R, BUFSIZ>`
-///
-/// (and the same for `BufWriter`)
-pub struct BufSizeHint<A: Attribute, const B: usize>(Leased<A, [u8]>);
-
-impl<A: Attribute, const B: usize> From<Leased<A, [u8]>> for BufSizeHint<A, B> {
-    fn from(lease: Leased<A, [u8]>) -> Self {
-        Self(lease)
-    }
-}
-
-impl<'a, A: AttributeRead, const BUFSIZ: usize> From<BufSizeHint<A, BUFSIZ>>
-    for LeaseBufReader<A, BUFSIZ>
-{
-    fn from(lease: BufSizeHint<A, BUFSIZ>) -> Self {
-        LeaseBufReader::from(lease.0)
-    }
-}
-
-impl<'a, A: AttributeWrite, const BUFSIZ: usize> From<BufSizeHint<A, BUFSIZ>>
-    for LeaseBufWriter<A, BUFSIZ>
-{
-    fn from(lease: BufSizeHint<A, BUFSIZ>) -> Self {
-        LeaseBufWriter::from(lease.0)
-    }
-}
