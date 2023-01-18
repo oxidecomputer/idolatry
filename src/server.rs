@@ -17,7 +17,7 @@ pub fn build_server_support(
     source: &str,
     stub_name: &str,
     style: ServerStyle,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     build_restricted_server_support(source, stub_name, style, &BTreeMap::new())
 }
 
@@ -26,7 +26,7 @@ pub fn build_restricted_server_support(
     stub_name: &str,
     style: ServerStyle,
     allowed_callers: &BTreeMap<String, Vec<usize>>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let mut stub_file = File::create(out.join(stub_name)).unwrap();
 
@@ -59,7 +59,7 @@ pub fn build_restricted_server_support(
 pub fn generate_server_constants(
     iface: &syntax::Interface,
     mut out: impl Write,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Generate message sizing constants for each message.
     let mut upper_names = vec![];
     for (name, op) in &iface.ops {
@@ -161,7 +161,7 @@ pub fn generate_server_constants(
 pub fn generate_server_conversions(
     iface: &syntax::Interface,
     mut out: impl Write,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     for (name, op) in &iface.ops {
         // Define args struct.
         writeln!(out, "#[allow(non_camel_case_types)]")?;
@@ -309,7 +309,7 @@ pub fn generate_server_conversions(
 pub fn generate_server_op_impl(
     iface: &syntax::Interface,
     mut out: impl Write,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     writeln!(
         out,
         "impl idol_runtime::ServerOp for {}Operation {{",
@@ -349,7 +349,7 @@ pub fn generate_server_in_order_trait(
     iface: &syntax::Interface,
     mut out: impl Write,
     allowed_callers: &BTreeMap<String, Vec<usize>>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Ensure any operations listed in `allowed_callers` actually exist for this
     // server.
     for opname in allowed_callers.keys() {
@@ -689,7 +689,7 @@ fn generate_server_section(
     iface: &syntax::Interface,
     text: &str,
     mut out: impl Write,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let bytes = text.as_bytes();
 
     write!(

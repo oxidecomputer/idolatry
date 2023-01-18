@@ -7,7 +7,7 @@ use super::syntax;
 pub fn generate_op_enum(
     iface: &syntax::Interface,
     mut out: impl std::io::Write,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     writeln!(out, "#[allow(non_camel_case_types)]")?;
     writeln!(
         out,
