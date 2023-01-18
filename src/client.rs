@@ -10,7 +10,7 @@ use std::path::PathBuf;
 pub fn build_client_stub(
     source: &str,
     stub_name: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let stub_file = File::create(out.join(stub_name)).unwrap();
 
@@ -22,7 +22,7 @@ pub fn build_client_stub(
 pub fn generate_client_stub_from_file(
     source: impl AsRef<std::path::Path>,
     out: impl std::io::Write,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let text = std::fs::read_to_string(source)?;
     let iface: syntax::Interface = ron::de::from_str(&text)?;
     generate_client_stub(&iface, out)
@@ -31,7 +31,7 @@ pub fn generate_client_stub_from_file(
 pub fn generate_client_stub(
     iface: &syntax::Interface,
     mut out: impl std::io::Write,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     common::generate_op_enum(iface, &mut out)?;
 
     writeln!(out, "#[allow(unused_imports)]")?;

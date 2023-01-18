@@ -4,7 +4,7 @@
 
 use std::io::Read;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut text = String::new();
     std::io::stdin().read_to_string(&mut text)?;
 
