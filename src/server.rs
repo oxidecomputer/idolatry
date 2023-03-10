@@ -180,6 +180,17 @@ pub fn generate_server_conversions(
                 writeln!(out, "#[derive(Copy, Clone, serde::Deserialize, hubpack::SerializedSize)]")?;
             }
         }
+        if !matches!(op.encoding, syntax::Encoding::Zerocopy) {
+            // The recv strategy thing only really makes sense for the Zerocopy
+            // encoding. In particular, generated clients for the other encoding
+            // won't use it.
+            for (argname, arg) in &op.args {
+                if !matches!(arg.recv, syntax::RecvStrategy::FromBytes) {
+                    panic!("operation {name} argument {argname} uses a recv strategy, \
+                        but this won't work with Ssmarshal/Hubpack encoding (remove it)");
+                }
+            }
+        }
         writeln!(out, "pub struct {}_{}_ARGS {{", iface.name, name)?;
         let mut need_args_impl = false;
         for (argname, arg) in &op.args {
