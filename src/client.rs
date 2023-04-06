@@ -126,7 +126,10 @@ pub fn generate_client_stub(
                 write!(out, " -> Result<{}, ", ok.display())?;
                 match err {
                     syntax::Error::CLike(ty) => {
-                        write!(out, "{}", ty.0)?;
+                        write!(out, "{}", ty)?;
+                    }
+                    syntax::Error::Complex(ty) => {
+                        write!(out, "{}", ty)?;
                     }
                     syntax::Error::ServerDeath => {
                         write!(out, "idol_runtime::ServerDeath")?;
@@ -242,6 +245,9 @@ pub fn generate_client_stub(
                 match err {
                     syntax::Error::CLike(_) | syntax::Error::ServerDeath => {
                         writeln!(out, "            let errsize = 0;")?;
+                    }
+                    syntax::Error::Complex(ty) => {
+                        writeln!(out, "            let errsize = <{ty} as hubpack::SerializedSize>::MAX_SIZE;")?;
                     }
                 }
 
@@ -447,6 +453,29 @@ pub fn generate_client_stub(
                             ty.0
                         )?;
                         writeln!(out, "                .unwrap_lite());")?;
+                    }
+                    syntax::Error::Complex(ty) => {
+                        match op.encoding {
+                            syntax::Encoding::Hubpack => {
+                                if !op.idempotent {
+                                    // Idempotent ops already checked for server
+                                    // death above.
+                                    writeln!(
+                                        out,
+                                        "            if let Some(g) = userlib::extract_new_generation(rc) {{"
+                                    )?;
+                                    writeln!(out, "                self.current_id.set(userlib::TaskId::for_index_and_gen(task.index(), g));")?;
+                                    writeln!(out, "                return Err({ty}::from(idol_runtime::ServerDeath));")?;
+                                    writeln!(out, "            }}")?;
+                                }
+                                writeln!(out, "            let (v, _): ({ty}, _) = hubpack::deserialize(&reply[..len]).unwrap_lite();")?;
+                                writeln!(out, "            return Err(v);")?;
+                            }
+                            e => {
+                                panic!("Complex error types not supported for \
+                                    {e:?} encoding, sorry");
+                            }
+                        }
                     }
                     syntax::Error::ServerDeath => {
                         assert!(!op.idempotent, "idempotent operations should not indicate server death");

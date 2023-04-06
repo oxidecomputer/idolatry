@@ -430,15 +430,26 @@ pub fn generate_server_in_order_trait(
                 )?;
                 match err {
                     syntax::Error::CLike(ty) => {
-                        write!(out, "{}", ty.0)?;
+                        write!(out, "{ty}")?;
 
                         // For non-idempotent operations, generate a bound on
                         // the error type ensuring it can represent server
                         // death.
                         if !op.idempotent {
                             error_type_bounds = Some(format!(
-                                "where {}: idol_runtime::IHaveConsideredServerDeathWithThisErrorType",
-                                ty.0,
+                                "where {ty}: idol_runtime::IHaveConsideredServerDeathWithThisErrorType"
+                            ));
+                        }
+                    }
+                    syntax::Error::Complex(ty) => {
+                        write!(out, "{ty}")?;
+
+                        // For non-idempotent operations, generate a bound on
+                        // the error type ensuring it can represent server
+                        // death.
+                        if !op.idempotent {
+                            error_type_bounds = Some(format!(
+                                "where {ty}: From<idol_runtime::ServerDeath>"
                             ));
                         }
                     }
@@ -665,9 +676,40 @@ pub fn generate_server_in_order_trait(
                 writeln!(out, "                    }}")?;
                 writeln!(out, "                    Err(val) => {{")?;
                 match err {
-                    // Note: for non-CLike errors we'd need to do an actual
-                    // reply here and then return Ok(()) to avoid invoking the
-                    // simple "return an integer" error path.
+                    syntax::Error::Complex(ty) => {
+                        // It might be surprising, but to return a complex error
+                        // we need to behave very much like the reply code
+                        // above: rather than returning `Err`, we need to
+                        // perform an actual `sys_reply` and then return `Ok` to
+                        // avoid triggering the reply handling code in the
+                        // generic dispatch loop.
+                        //
+                        // So, the fact that this error returns `Ok` is not a
+                        // bug.
+                        match op.encoding {
+                            syntax::Encoding::Hubpack => {
+                                writeln!(out, "                        match val {{")?;
+                                writeln!(out, "                            idol_runtime::RequestError::Fail(f) => {{")?;
+                                // Note: because of the way `into_fault` works,
+                                // if it returns None, we don't send a reply at
+                                // all. This is because None indicates that the
+                                // caller was restarted or otherwise crashed
+                                // while waiting.
+                                writeln!(out, "                                if let Some(fault) = f.into_fault() {{")?;
+                                writeln!(out, "                                    userlib::sys_reply_fault(rm.sender, fault);")?;
+                                writeln!(out, "                                }}")?;
+                                writeln!(out, "                            }}")?;
+                                writeln!(out, "                            idol_runtime::RequestError::Runtime(e) => {{")?;
+                                writeln!(out, "                                let mut reply_buf = [0u8; <{ty} as hubpack::SerializedSize>::MAX_SIZE];")?;
+                                writeln!(out, "                                let n_reply = hubpack::serialize(&mut reply_buf, &e).map_err(|_| ()).unwrap_lite();")?;
+                                writeln!(out, "                                userlib::sys_reply(rm.sender, 1, &reply_buf[..n_reply]);")?;
+                                writeln!(out, "                            }}")?;
+                                writeln!(out, "                        }}")?;
+                            }
+                            _ => panic!("Complex error types not supported for {:?} encoding", op.encoding),
+                        }
+                        writeln!(out, "                        Ok(())")?;
+                    }
                     syntax::Error::CLike(_) => {
                         writeln!(
                             out,
