@@ -275,6 +275,12 @@ impl Ty {
     }
 }
 
+impl std::fmt::Display for Ty {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// Enumerates different ways that an error type might be passed through the
 /// REPLY syscall.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -285,6 +291,14 @@ pub enum Error {
     /// The error type here may or may not be required to also represent dead
     /// codes, depending on whether the operation is `idempotent`.
     CLike(Ty),
+
+    /// A non-zero return code indicates an error, but the specific type of
+    /// error is found by deserializing the message payload using the same
+    /// encoding as specified for the Ok side.
+    ///
+    /// The error type here may or may not be required to also represent dead
+    /// codes, depending on whether the operation is `idempotent`.
+    Complex(Ty),
 
     /// The client will never return an error, but the function is not
     /// idempotent and will return `Err(ServerDeath {})` if the server died

@@ -29,7 +29,8 @@ pub enum ClientError {
     WentAway = 0xFFFF_FE03,
 }
 
-/// Marker trait indicating an error type is able to represent server death.
+/// Marker trait indicating a simple error type is able to represent server
+/// death.
 ///
 /// This should be implemented on error types used in non-idempotent operations,
 /// indicating that they are capable of handling server death, usually by
