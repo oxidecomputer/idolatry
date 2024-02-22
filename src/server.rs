@@ -374,7 +374,7 @@ pub fn generate_server_in_order_trait(
 
     let trt = format!("InOrder{}Impl", iface.name);
 
-    writeln!(out, "pub trait {} {{", trt)?;
+    writeln!(out, "pub trait {}: idol_runtime::NotificationHandler {{", trt)?;
     writeln!(
         out,
         "    fn recv_source(&self) -> Option<userlib::TaskId> {{"

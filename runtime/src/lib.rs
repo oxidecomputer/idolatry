@@ -127,7 +127,26 @@ where
 /// generated dispatch loops that also route notifications.
 ///
 /// The compiler does not generate an impl for this trait, you need to customize
-/// it for your server.
+/// it for your server. If your server really truly does not use notifications
+/// for anything ever, then you can implement the trait like this:
+///
+/// ```
+/// # struct MyServer;
+///
+/// impl idol_runtime::NotificationHandler for MyServer {
+///     fn current_notification_mask(&self) -> u32 {
+///         // Do not set any bits in the notification mask.
+///         0
+///     }
+///     fn handle_notification(&mut self, _bits: u32) {
+///         unreachable!()
+///     }
+/// }
+/// ```
+///
+/// The trait _does not_ provide default implementations of these functions to
+/// force you to explicitly disavow notifications, because we've had at least
+/// one bug where someone expected notifications but never got 'em.
 pub trait NotificationHandler {
     /// Produces the notification mask that should be used on any calls to RECV.
     ///
@@ -180,78 +199,7 @@ pub trait Server<Op: ServerOp> {
     ) -> Result<(), RequestError<u16>>;
 }
 
-/// Generic server dispatch routine for cases where notifications are not
-/// required.
-///
-/// `buffer` is scratch space for incoming messages. It must be large enough to
-/// accommodate any message in the IPC interface implemented by the server `S`.
-/// (This would be an array sized by an associated constant, but Rust currently
-/// doesn't let us do that.)
-///
-/// `server` is a type that implements `Server<Op>`. More specifically, the
-/// implementation must be for `(PhantomData<Op>, &mut S)`. This is a bit of a
-/// hack that works around overlapping impl rules. The compiler will normally
-/// generate that impl for you, based on your impl of an interface-specific
-/// generated trait.
-///
-/// If you need notifications, use `dispatch_n`.
-pub fn dispatch<S, Op: ServerOp>(buffer: &mut [u8], server: &mut S)
-where
-    for<'a> (core::marker::PhantomData<Op>, &'a mut S): Server<Op>,
-{
-    let mut server = (core::marker::PhantomData, server);
-    let rm = match sys_recv(buffer, 0, server.recv_source()) {
-        Ok(rm) => rm,
-        Err(_) => {
-            server.closed_recv_fail();
-            return;
-        }
-    };
-
-    let op = match Op::from_u32(rm.operation) {
-        Some(op) => op,
-        None => {
-            sys_reply_fault(rm.sender, ReplyFaultReason::UndefinedOperation);
-            return;
-        }
-    };
-
-    if rm.message_len > buffer.len() {
-        sys_reply_fault(rm.sender, ReplyFaultReason::BadMessageSize);
-        return;
-    }
-    if rm.response_capacity < op.max_reply_size() {
-        sys_reply_fault(rm.sender, ReplyFaultReason::ReplyBufferTooSmall);
-        return;
-    }
-
-    let incoming = &buffer[..rm.message_len];
-
-    if rm.lease_count != op.required_lease_count() {
-        sys_reply_fault(rm.sender, ReplyFaultReason::BadLeases);
-        return;
-    }
-
-    match server.handle(op, incoming, &rm) {
-        Ok(()) => {
-            // stub has taken care of it.
-        }
-        Err(RequestError::Runtime(code)) => {
-            // stub has used the convenience return for data-less errors,
-            // we'll do the reply.
-            sys_reply(rm.sender, code as u32, &[]);
-        }
-        Err(RequestError::Fail(code)) => {
-            if let Some(reason) = code.into_fault() {
-                sys_reply_fault(rm.sender, reason);
-            } else {
-                // Cases like WentAway do not merit a reply.
-            }
-        }
-    }
-}
-
-/// Generic server dispatch routine for servers that use notifications.
+/// Generic server dispatch routine.
 ///
 /// `buffer` is scratch space for incoming messages. It must be large enough to
 /// accommodate any message in the IPC interface implemented by the server `S`.
@@ -265,10 +213,9 @@ where
 /// generated trait.
 ///
 /// `server` is required to directly impl `NotificationHandler` (i.e. you must
-/// write the impl yourself).
-///
-/// If you don't need notifications, use `dispatch`.
-pub fn dispatch_n<S: NotificationHandler, Op: ServerOp>(
+/// write the impl yourself). If you don't care about notifications, see the
+/// `NotificationHandler` trait for an example of a do-nothing impl.
+pub fn dispatch<S: NotificationHandler, Op: ServerOp>(
     buffer: &mut [u8],
     server: &mut S,
 ) where
@@ -285,7 +232,18 @@ pub fn dispatch_n<S: NotificationHandler, Op: ServerOp>(
     };
 
     if rm.sender == TaskId::KERNEL {
-        server.1.handle_notification(rm.operation);
+        // This test is slightly subtle: servers that don't use notifications
+        // return a constant zero from `current_notification_mask`. Because we
+        // know the kernel won't return a notification if the mask is zero, we
+        // know this block is unreachable.
+        //
+        // The compiler does not, however. Including this explicit test ensures
+        // that the `handle_notification` implementation of such a server is
+        // compiled out as unreachable. This allows it to include e.g. a panic
+        // without bloating the text size.
+        if mask != 0 {
+            server.1.handle_notification(rm.operation);
+        }
         return;
     }
 
