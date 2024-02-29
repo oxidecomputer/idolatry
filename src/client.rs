@@ -533,7 +533,7 @@ fn client_stub_tokens(
 
         #[allow(clippy::let_unit_value,
                 clippy::collapsible_else_if,
-                clippy::needless_returnm
+                clippy::needless_return,
                 clippy::unused_unit)]
         #[automatically_derived]
         impl #iface_name {
