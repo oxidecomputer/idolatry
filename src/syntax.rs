@@ -8,15 +8,52 @@
 //! parser, but then, McCarthy said the same thing about s-expressions.
 
 use indexmap::IndexMap;
+use quote::TokenStreamExt;
 use serde::{Deserialize, Serialize};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::num::NonZeroU32;
+
+/// An identifier.
+#[derive(
+    Clone, Debug, Eq, PartialEq, Hash, SerializeDisplay, DeserializeFromStr,
+)]
+pub struct Name(pub syn::Ident);
+
+impl std::fmt::Display for Name {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::str::FromStr for Name {
+    type Err = syn::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        syn::parse_str(s).map(Self)
+    }
+}
+
+impl quote::ToTokens for Name {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        self.0.to_tokens(tokens)
+    }
+}
+
+impl quote::IdentFragment for Name {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        quote::IdentFragment::fmt(&self.0, f)
+    }
+
+    fn span(&self) -> Option<proc_macro2::Span> {
+        quote::IdentFragment::span(&self.0)
+    }
+}
 
 /// Definition of an IPC interface.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Interface {
     /// Name of interface. This will be used in generated types, and should
     /// match Rust type name conventions.
-    pub name: String,
+    pub name: Name,
     /// Operations supported by the interface. The names of the operations
     /// should be Rust identifiers, and will be used in generated function
     /// names.
@@ -26,7 +63,7 @@ pub struct Interface {
     #[serde(
         deserialize_with = "crate::serde_helpers::deserialize_reject_dup_keys"
     )]
-    pub ops: IndexMap<String, Operation>,
+    pub ops: IndexMap<Name, Operation>,
 }
 
 impl std::str::FromStr for Interface {
@@ -59,7 +96,7 @@ pub struct Operation {
         default,
         deserialize_with = "crate::serde_helpers::deserialize_reject_dup_keys"
     )]
-    pub args: IndexMap<String, AttributedTy>,
+    pub args: IndexMap<Name, AttributedTy>,
     /// Arguments of the operation that are converted into leases. If omitted,
     /// zero leases are assumed.
     ///
@@ -69,7 +106,7 @@ pub struct Operation {
         default,
         deserialize_with = "crate::serde_helpers::deserialize_reject_dup_keys"
     )]
-    pub leases: IndexMap<String, Lease>,
+    pub leases: IndexMap<Name, Lease>,
     /// Expected type of the response.
     pub reply: Reply,
 
@@ -151,6 +188,21 @@ pub enum Reply {
     },
 }
 
+impl quote::ToTokens for Reply {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        match self {
+            Self::Simple(AttributedTy { ty, .. }) => ty.to_tokens(tokens),
+            Self::Result {
+                ok: AttributedTy { ty: ok, .. },
+                err,
+            } => quote::quote! {
+                Result<#ok, #err>
+            }
+            .to_tokens(tokens),
+        }
+    }
+}
+
 /// A type that can also have common attributes applied.
 ///
 /// `AttributedTy` appears in both argument and reply type positions in the
@@ -174,19 +226,21 @@ pub struct AttributedTy {
 }
 
 impl AttributedTy {
-    pub fn display(&self) -> &impl std::fmt::Display {
-        &self.ty.0
-    }
+    // pub fn display(&self) -> &impl std::fmt::Display {
+    //     &self.ty.0
+    // }
 
     /// Returns the Rust type that should be used to represent this in the
     /// internal args/reply structs.
-    pub fn repr_ty(&self) -> &str {
+    pub fn repr_ty(&self) -> syn::Type {
         match &self.recv {
-            RecvStrategy::From(t, _) | RecvStrategy::FromPrimitive(t) => &t.0,
-            RecvStrategy::FromBytes => match self.ty.0.as_str() {
-                "bool" => "u8",
-                ty => ty,
-            },
+            RecvStrategy::From(t, _) | RecvStrategy::FromPrimitive(t) => {
+                t.0.clone()
+            }
+            RecvStrategy::FromBytes if self.ty.is_bool() => {
+                syn::parse_quote! { bool }
+            }
+            RecvStrategy::FromBytes => self.ty.0.clone(),
         }
     }
 }
@@ -244,8 +298,9 @@ impl<'de> serde::de::Visitor<'de> for AttributedTyVisitor {
     where
         E: serde::de::Error,
     {
+        let ty = v.parse::<Ty>().map_err(E::custom)?;
         Ok(AttributedTy {
-            ty: Ty(v.to_string()),
+            ty,
             recv: RecvStrategy::default(),
         })
     }
@@ -260,24 +315,60 @@ impl<'de> Deserialize<'de> for AttributedTy {
     }
 }
 
+impl quote::ToTokens for AttributedTy {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        self.ty.to_tokens(tokens)
+    }
+}
+
 /// A type name.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct Ty(pub String);
+#[derive(
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
+pub struct Ty(pub syn::Type);
 
 impl Ty {
     /// Checks whether the type name looks like it might be unsized.
     ///
     /// We use this to choose lease validation strategies.
     pub fn appears_unsized(&self) -> bool {
-        // This is a hack. Need to work out a better way to determine this.
-        self.0.starts_with('[') && self.0.ends_with(']')
+        matches!(self.0, syn::Type::Slice(_) | syn::Type::TraitObject(_))
+    }
+
+    /// Returns `true` if this is a bool.
+    pub fn is_bool(&self) -> bool {
+        thread_local! {
+            static BOOL_TY: std::cell::RefCell<Option<syn::Type>> = const { std::cell::RefCell::new(None) };
+        }
+        BOOL_TY.with(|ty| {
+            let mut ty = ty.borrow_mut();
+            let ty = ty.get_or_insert_with(|| syn::parse_quote! { bool });
+            self.0 == *ty
+        })
     }
 }
 
 impl std::fmt::Display for Ty {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        self.0.fmt(f)
+        quote::quote! { #self }.fmt(f)
+    }
+}
+
+impl std::str::FromStr for Ty {
+    type Err = syn::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        syn::parse_str(s).map(Self)
+    }
+}
+
+impl quote::ToTokens for Ty {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        self.0.to_tokens(tokens)
     }
 }
 
@@ -306,6 +397,20 @@ pub enum Error {
     ServerDeath,
 }
 
+impl quote::ToTokens for Error {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        match self {
+            Self::CLike(ty) | Self::Complex(ty) => ty.to_tokens(tokens),
+            Self::ServerDeath => {
+                tokens.append(proc_macro2::Ident::new(
+                    "idol_runtime::ServerDeath",
+                    proc_macro2::Span::call_site(),
+                ));
+            }
+        }
+    }
+}
+
 /// Enumerates different ways that a type might be unpacked when received over
 /// an IPC interface from another task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -324,7 +429,7 @@ pub enum RecvStrategy {
     ///
     /// If the second field is `Some(fn_name)`, it specifies conversion by
     /// `fn_name`.
-    From(Ty, #[serde(default)] Option<String>),
+    From(Ty, #[serde(default)] Option<Name>),
 }
 
 impl Default for RecvStrategy {

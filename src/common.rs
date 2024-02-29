@@ -3,22 +3,21 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use super::syntax;
+use quote::{format_ident, quote};
 
-pub fn generate_op_enum(
-    iface: &syntax::Interface,
-    mut out: impl std::io::Write,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    writeln!(out, "#[allow(non_camel_case_types)]")?;
-    writeln!(
-        out,
-        "#[derive(Copy, Clone, Debug, Eq, PartialEq, userlib::FromPrimitive)]"
-    )?;
-    writeln!(out, "pub enum {}Operation {{", iface.name)?;
-    for (idx, name) in iface.ops.keys().enumerate() {
-        writeln!(out, "    {} = {},", name, idx + 1)?;
+pub fn generate_op_enum(iface: &syntax::Interface) -> proc_macro2::TokenStream {
+    let variants = iface.ops.keys().enumerate().map(|(idx, name)| {
+        let val = idx + 1;
+        quote! {
+            #name = #val,
+        }
+    });
+    let name = format_ident!("{}Operation", iface.name);
+    quote! {
+        #[allow(non_camel_case_types)]
+        #[derive(Copy, Clone, Debug, Eq, PartialEq, userlib::FromPrimitive)]
+        pub enum #name {
+            #(#variants)*
+        }
     }
-    writeln!(out, "}}")?;
-    writeln!(out)?;
-
-    Ok(())
 }
