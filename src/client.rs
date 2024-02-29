@@ -252,9 +252,9 @@ fn client_stub_tokens(
                 }
             };
             quote! {
-                const REPLY_SIZE: usize = {{
+                const REPLY_SIZE: usize = {
                     #size
-                }};
+                };
             }
         };
 
