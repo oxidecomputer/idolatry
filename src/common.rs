@@ -7,7 +7,15 @@ use quote::quote;
 
 pub fn generate_op_enum(iface: &syntax::Interface) -> proc_macro2::TokenStream {
     let variants = iface.ops.keys().enumerate().map(|(idx, name)| {
-        let val = idx + 1;
+        // This little dance is unfortunately necessary because `quote` will, by
+        // default, generate a literal with the `usize` suffix when
+        // interpolating a `usize`. This is *not* what we want here, because we
+        // don't generate a `#[repr(usize)]` attribute.
+        let val = syn::LitInt::new(
+            &(idx + 1).to_string(),
+            proc_macro2::Span::call_site(),
+        );
+        debug_assert_eq!(val.suffix(), "");
         quote! {
             #name = #val,
         }
