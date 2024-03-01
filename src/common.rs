@@ -5,7 +5,27 @@
 use super::syntax;
 use quote::quote;
 
-pub fn generate_op_enum(iface: &syntax::Interface) -> proc_macro2::TokenStream {
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[must_use]
+pub struct GeneratorSettings {
+    pub(crate) counters: bool,
+}
+
+impl GeneratorSettings {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Generate event counters for each IPC operation.
+    pub fn with_counters(self, counters: bool) -> Self {
+        Self { counters, ..self }
+    }
+}
+
+pub fn generate_op_enum(
+    iface: &syntax::Interface,
+    settings: &GeneratorSettings,
+) -> proc_macro2::TokenStream {
     let variants = iface.ops.keys().enumerate().map(|(idx, name)| {
         // This little dance is unfortunately necessary because `quote` will, by
         // default, generate a literal with the `usize` suffix when
@@ -21,9 +41,17 @@ pub fn generate_op_enum(iface: &syntax::Interface) -> proc_macro2::TokenStream {
         }
     });
     let name = iface.name.as_op_enum();
+    let maybe_count = if settings.counters {
+        quote! {
+            #[derive(counters::Count)]
+        }
+    } else {
+        quote! {}
+    };
     quote! {
         #[allow(non_camel_case_types)]
         #[derive(Copy, Clone, Debug, Eq, PartialEq, userlib::FromPrimitive)]
+        #maybe_count
         pub enum #name {
             #(#variants)*
         }
