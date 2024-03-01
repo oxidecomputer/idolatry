@@ -8,32 +8,36 @@
 //! parser, but then, McCarthy said the same thing about s-expressions.
 
 use indexmap::IndexMap;
+use once_cell::unsync::OnceCell;
 use quote::TokenStreamExt;
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::num::NonZeroU32;
 
 /// An identifier.
-#[derive(
-    Clone,
-    Debug,
-    Eq,
-    PartialEq,
-    Ord,
-    PartialOrd,
-    Hash,
-    SerializeDisplay,
-    DeserializeFromStr,
-)]
+#[derive(Debug, SerializeDisplay, DeserializeFromStr)]
 pub struct Name {
     pub ident: syn::Ident,
-    /// A bunch of code generation makes constants, which require an uppercase
-    /// version of identifiers. Thus, we cache this to reduce the number of
-    /// strings we allocate a bunch of times during codegen.
-    ///
-    /// This is, admittedly, a kind of goofy microoptimization that probably
-    /// doesn't matter that much.
+
+    // A bunch of code generation uses input identifiers to construct other
+    // identifiers, such as prefixing or uppercasing, multiple times for the
+    // same identifier. Thus, we cache these to reduce the number of
+    // strings we allocate a bunch of times during codegen.
+    //
+    // This is, admittedly, a kind of goofy microoptimization that probably
+    // doesn't matter that much.
+    /// Cached uppercase version of the identifier, used for generating constants.
     uppercase: String,
+    /// Cached version of the identifier with a `arg_` prefix, used for
+    /// generating argument names in generated code.
+    arg_name: OnceCell<syn::Ident>,
+    /// Cached version of the identifier as a `{uppercase}_REPLY_SIZE` constant.
+    reply_size: OnceCell<syn::Ident>,
+    /// Cached version of the identifier with a `raw_` prefix, used for
+    /// generating arguments which perform conversions.
+    raw_argname: OnceCell<syn::Ident>,
+    /// Cached version of the identifier as `{name}Operation`.
+    op_enum: OnceCell<syn::Ident>,
 }
 
 impl std::fmt::Display for Name {
@@ -47,7 +51,14 @@ impl std::str::FromStr for Name {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let ident = syn::parse_str(s)?;
         let uppercase = s.to_uppercase();
-        Ok(Self { ident, uppercase })
+        Ok(Self {
+            ident,
+            arg_name: OnceCell::new(),
+            reply_size: OnceCell::new(),
+            raw_argname: OnceCell::new(),
+            op_enum: OnceCell::new(),
+            uppercase,
+        })
     }
 }
 
@@ -67,9 +78,69 @@ impl quote::IdentFragment for Name {
     }
 }
 
+impl PartialEq for Name {
+    fn eq(&self, other: &Self) -> bool {
+        self.ident == other.ident
+    }
+}
+
+impl Eq for Name {}
+
+impl Ord for Name {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.ident.cmp(&other.ident)
+    }
+}
+
+impl PartialOrd for Name {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl std::hash::Hash for Name {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.ident.hash(state);
+    }
+}
+
+impl Clone for Name {
+    fn clone(&self) -> Self {
+        Self {
+            ident: self.ident.clone(),
+            uppercase: self.uppercase.clone(),
+            arg_name: OnceCell::new(),
+            reply_size: OnceCell::new(),
+            raw_argname: OnceCell::new(),
+            op_enum: OnceCell::new(),
+        }
+    }
+}
+
 impl Name {
     pub(crate) fn uppercase(&self) -> &str {
         &self.uppercase
+    }
+
+    pub(crate) fn arg_prefixed(&self) -> &syn::Ident {
+        self.arg_name
+            .get_or_init(|| quote::format_ident!("arg_{}", self))
+    }
+
+    pub(crate) fn as_reply_size(&self) -> &syn::Ident {
+        self.reply_size.get_or_init(|| {
+            quote::format_ident!("{}_REPLY_SIZE", self.uppercase)
+        })
+    }
+
+    pub(crate) fn raw_prefixed(&self) -> &syn::Ident {
+        self.raw_argname
+            .get_or_init(|| quote::format_ident!("raw_{self}"))
+    }
+
+    pub(crate) fn as_op_enum(&self) -> &syn::Ident {
+        self.op_enum
+            .get_or_init(|| quote::format_ident!("{self}Operation"))
     }
 }
 

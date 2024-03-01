@@ -216,6 +216,7 @@ name = "idol"
 version = "0.4.0"
 dependencies = [
  "indexmap 1.9.2",
+ "once_cell",
  "prettyplease",
  "proc-macro2",
  "quote",

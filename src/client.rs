@@ -131,14 +131,8 @@ fn client_stub_tokens(
         // identifiers.
         let argmap = {
             let argnames = {
-                let args = op
-                    .args
-                    .keys()
-                    .map(|name| quote::format_ident!("arg_{name}"));
-                let leases = op
-                    .leases
-                    .keys()
-                    .map(|name| quote::format_ident!("arg_{name}"));
+                let args = op.args.keys().map(syntax::Name::arg_prefixed);
+                let leases = op.leases.keys().map(syntax::Name::arg_prefixed);
                 args.chain(leases)
             };
             let argvals = op.args.keys().chain(op.leases.keys());
@@ -155,7 +149,7 @@ fn client_stub_tokens(
         let lease_validators =
             op.leases.iter().filter_map(|(leasename, lease)| {
                 let n = lease.max_len?.get();
-                let argname = quote::format_ident!("arg_{leasename}");
+                let argname = leasename.arg_prefixed();
                 // Note: we're not generating a panic message in the client to
                 // save ROM space. If the user chases the line number into the
                 // client stub source file the error should be clear.
@@ -254,7 +248,7 @@ fn client_stub_tokens(
         // Create instance of args struct from args.
         let mk_arg_struct = {
             let initializers = op.args.iter().map(|(argname, arg)| {
-                let arg_argname = quote::format_ident!("arg_{argname}");
+                let arg_argname = argname.arg_prefixed();
                 if arg.ty.is_bool() {
                     // Special case: we send booleans as non-zero u8, so that
                     // we can use them in Zerocopy situations
@@ -292,7 +286,7 @@ fn client_stub_tokens(
         };
 
         let send = {
-            let op_enum_name = quote::format_ident!("{iface_name}Operation");
+            let op_enum_name = iface_name.as_op_enum();
             let buf = match op.encoding {
                 syntax::Encoding::Zerocopy => {
                     quote! { zerocopy::AsBytes::as_bytes(&args) }
@@ -312,7 +306,7 @@ fn client_stub_tokens(
                     syn::Ident::new(ctor, proc_macro2::Span::call_site());
                 let asbytes =
                     syn::Ident::new(asbytes, proc_macro2::Span::call_site());
-                let argname = quote::format_ident!("arg_{leasename}");
+                let argname = leasename.arg_prefixed();
                 quote! {
                     userlib::Lease::#ctor(zerocopy::AsBytes::#asbytes(#argname))
                 }

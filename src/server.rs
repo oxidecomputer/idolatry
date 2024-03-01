@@ -23,6 +23,10 @@ pub fn build_server_support(
     build_restricted_server_support(source, stub_name, style, &BTreeMap::new())
 }
 
+// `Name` is only mutable as it contains `OnceCell`s, but they don't effect its
+// `Hash`, `PartialEq`, `Eq`, `Ord`, or `PartialOrd` implementations. So, it can
+// safely be used as a map key.
+#[allow(clippy::mutable_key_type)]
 pub fn build_restricted_server_support(
     source: &str,
     stub_name: &str,
@@ -44,6 +48,10 @@ pub fn build_restricted_server_support(
     Ok(())
 }
 
+// `Name` is only mutable as it contains `OnceCell`s, but they don't effect its
+// `Hash`, `PartialEq`, `Eq`, `Ord`, or `PartialOrd` implementations. So, it can
+// safely be used as a map key.
+#[allow(clippy::mutable_key_type)]
 pub fn generate_restricted_server_support(
     iface: &syntax::Interface,
     style: ServerStyle,
@@ -109,7 +117,7 @@ pub fn generate_server_constants(iface: &syntax::Interface) -> TokenStream {
             tokens
         };
         let reply_size = {
-            let const_name = format_ident!("{}_REPLY_SIZE", name.uppercase());
+            let const_name = name.as_reply_size();
             let val = match &op.reply {
                 syntax::Reply::Result { ok, .. } => {
                     // This strategy only uses bytes for the OK side of the type,
@@ -194,7 +202,7 @@ pub fn generate_server_conversions(iface: &syntax::Interface) -> TokenStream {
                     syntax::RecvStrategy::FromBytes if arg.ty.is_bool() => {
                         // Special-case handling to send bools using a Zerocopy
                         // encoding strategy, for efficiency.
-                        let ident = format_ident!("raw_{argname}");
+                        let ident =argname.raw_prefixed();
                         need_args_impl = true;
                         quote! {
                             pub #ident: u8
@@ -207,7 +215,7 @@ pub fn generate_server_conversions(iface: &syntax::Interface) -> TokenStream {
                     syntax::RecvStrategy::FromPrimitive(ty)
                     | syntax::RecvStrategy::From(ty, _) => {
                         need_args_impl = true;
-                        let ident = format_ident!("raw_{argname}");
+                        let ident = argname.raw_prefixed();
                         quote! {
                             pub #ident: #ty
                         }
@@ -227,7 +235,7 @@ pub fn generate_server_conversions(iface: &syntax::Interface) -> TokenStream {
                     match &arg.recv {
                         syntax::RecvStrategy::FromPrimitive(ty) => {
                             let arg_ty = &arg.ty;
-                            let raw_argname = format_ident!("raw_{argname}");
+                            let raw_argname = argname.raw_prefixed();
                             let from_ty = format_ident!("from_{ty}");
                             quote! {
                                 pub fn #argname(&self) -> Option<#arg_ty> {
@@ -238,14 +246,13 @@ pub fn generate_server_conversions(iface: &syntax::Interface) -> TokenStream {
                         syntax::RecvStrategy::FromBytes if arg.ty.is_bool() => {
                             // The only FromBytes type which also needs a decoder
                             // function is a `bool` encoded as a single `u8`
-
-                            let raw_argname = format_ident!("raw_{argname}");
-                                quote! {
-                                    pub fn #argname(&self) -> bool {
-                                        self.#raw_argname != 0
-                                    }
+                            let raw_argname = argname.raw_prefixed();
+                            quote! {
+                                pub fn #argname(&self) -> bool {
+                                    self.#raw_argname != 0
                                 }
                             }
+                        }
                         _ => quote! {}
                     }
                 });
@@ -324,9 +331,9 @@ pub fn generate_server_conversions(iface: &syntax::Interface) -> TokenStream {
 }
 
 pub fn generate_server_op_impl(iface: &syntax::Interface) -> TokenStream {
-    let op_enum = format_ident!("{}Operation", iface.name);
+    let op_enum = iface.name.as_op_enum();
     let max_reply_size_cases = iface.ops.keys().map(|opname| {
-        let reply_size = format_ident!("{}_REPLY_SIZE", opname.uppercase());
+        let reply_size = opname.as_reply_size();
         quote! {
             Self::#opname => #reply_size,
         }
@@ -355,6 +362,10 @@ pub fn generate_server_op_impl(iface: &syntax::Interface) -> TokenStream {
     }
 }
 
+// `Name` is only mutable as it contains `OnceCell`s, but they don't effect its
+// `Hash`, `PartialEq`, `Eq`, `Ord`, or `PartialOrd` implementations. So, it can
+// safely be used as a map key.
+#[allow(clippy::mutable_key_type)]
 pub fn generate_server_in_order_trait(
     iface: &syntax::Interface,
     allowed_callers: &BTreeMap<syntax::Name, Vec<usize>>,
@@ -374,7 +385,7 @@ pub fn generate_server_in_order_trait(
     let trt = format_ident!("InOrder{iface_name}Impl");
     let trait_def = generate_trait_def(iface, &trt);
 
-    let enum_name = format_ident!("{iface_name}Operation");
+    let enum_name = iface.name.as_op_enum();
     let op_cases = iface.ops.iter().map(|(opname, op)| {
         let check_allowed = if let Some(allowed_callers) = allowed_callers.get(opname) {
             // With our current optimization settings and rustc/llvm version,
@@ -428,13 +439,13 @@ pub fn generate_server_in_order_trait(
                     }
                 },
                 syntax::RecvStrategy::From(_, None) => {
-                    let name = format_ident!("raw_{argname}");
+                    let name = argname.raw_prefixed();
                     quote! {
                         args.#name.into()
                     }
                 }
                 syntax::RecvStrategy::From(_, Some(f)) => {
-                    let name = format_ident!("raw_{argname}");
+                    let name = argname.raw_prefixed();
                     quote! {
                         #f(args.#name)
                     }
@@ -491,7 +502,7 @@ pub fn generate_server_in_order_trait(
                     userlib::sys_reply(rm.sender, 0, zerocopy::AsBytes::as_bytes(&val));
                 },
                 syntax::Encoding::Hubpack | syntax::Encoding::Ssmarshal => {
-                    let reply_size = format_ident!("{}_REPLY_SIZE", opname.uppercase());
+                    let reply_size = opname.as_reply_size();
                     let serializer = op.encoding.crate_name();
                     quote! {
                         let mut reply_buf = [0u8; #reply_size];
