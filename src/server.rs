@@ -373,85 +373,7 @@ pub fn generate_server_in_order_trait(
 
     let iface_name = &iface.name;
     let trt = format_ident!("InOrder{iface_name}Impl");
-
-    let trait_def = {
-        let ops = iface.ops.iter().map(|(name, op)| {
-            let args = op.args.iter().map(|(argname, arg)| {
-                let ty = &arg.ty;
-                quote! {
-                    #argname: #ty
-                }
-            });
-            let leases = op.leases.iter().map(|(leasename, lease)| {
-                let r = if lease.read { "R" } else { ""};
-                let w = if lease.write { "W" } else { ""};
-                let lease_kind = format_ident!("{r}{w}");
-                let ty = &lease.ty;
-                if let Some(n) = lease.max_len {
-                    let n = n.get();
-                    quote! {
-                        #leasename: idol_runtime::LenLimit<idol_runtime::Leased<idol_runtime::#lease_kind, #ty>, #n>
-                    }
-                } else {
-                    quote! {
-                        #leasename: idol_runtime::Leased<idol_runtime::#lease_kind, #ty>
-                    }
-                }
-            });
-            let mut error_type_bounds = quote! {};
-            let ret_ty = match &op.reply {
-                syntax::Reply::Result { ok, err } => {
-                    let err_ty = match err {
-                        syntax::Error::CLike(ty) => {
-                            // For non-idempotent operations, generate a bound on
-                            // the error type ensuring it can represent server
-                            // death.
-                            if !op.idempotent {
-                                error_type_bounds = quote!{
-                                    where #ty: idol_runtime::IHaveConsideredServerDeathWithThisErrorType
-                                };
-                            }
-                            quote! { #ty }
-                        }
-                        syntax::Error::Complex(ty) => {
-                            error_type_bounds = quote! {
-                                where #ty: From<idol_runtime::ServerDeath>
-                            };
-                            quote! { #ty }
-                        }
-                        syntax::Error::ServerDeath => {
-                            quote! { core::convert::Infallible }
-                        }
-                    };
-                    quote! { Result<#ok, idol_runtime::RequestError<#err_ty>> }
-                },
-                syntax::Reply::Simple(t) => {
-                    quote! { Result<#t, idol_runtime::RequestError<core::convert::Infallible>> }
-                },
-            };
-            quote! {
-                fn #name(
-                    &mut self,
-                    msg: &userlib::RecvMessage,
-                    #( #args ),*,
-                    #( #leases ),*
-                ) -> #ret_ty #error_type_bounds;
-            }
-        });
-        quote! {
-            pub trait #trt: idol_runtime::NotificationHandler {
-                fn recv_source(&self) -> Option<userlib::TaskId> {
-                    None
-                }
-
-                fn closed_recv_fail(&mut self) {
-                    panic!()
-                }
-
-                #( #ops )*
-            }
-        }
-    };
+    let trait_def = generate_trait_def(iface, &trt);
 
     let enum_name = format_ident!("{iface_name}Operation");
     let op_cases = iface.ops.iter().map(|(opname, op)| {
@@ -685,6 +607,88 @@ pub fn generate_server_in_order_trait(
             }
         }
     })
+}
+
+fn generate_trait_def(
+    iface: &syntax::Interface,
+    trt: &syn::Ident,
+) -> TokenStream {
+    let ops = iface.ops.iter().map(|(name, op)| {
+        let args = op.args.iter().map(|(argname, arg)| {
+            let ty = &arg.ty;
+            quote! {
+                #argname: #ty
+            }
+        });
+        let leases = op.leases.iter().map(|(leasename, lease)| {
+            let r = if lease.read { "R" } else { ""};
+            let w = if lease.write { "W" } else { ""};
+            let lease_kind = format_ident!("{r}{w}");
+            let ty = &lease.ty;
+            if let Some(n) = lease.max_len {
+                let n = n.get();
+                quote! {
+                    #leasename: idol_runtime::LenLimit<idol_runtime::Leased<idol_runtime::#lease_kind, #ty>, #n>
+                }
+            } else {
+                quote! {
+                    #leasename: idol_runtime::Leased<idol_runtime::#lease_kind, #ty>
+                }
+            }
+        });
+        let mut error_type_bounds = quote! {};
+        let ret_ty = match &op.reply {
+            syntax::Reply::Result { ok, err } => {
+                let err_ty = match err {
+                    syntax::Error::CLike(ty) => {
+                        // For non-idempotent operations, generate a bound on
+                        // the error type ensuring it can represent server
+                        // death.
+                        if !op.idempotent {
+                            error_type_bounds = quote!{
+                                where #ty: idol_runtime::IHaveConsideredServerDeathWithThisErrorType
+                            };
+                        }
+                        quote! { #ty }
+                    }
+                    syntax::Error::Complex(ty) => {
+                        error_type_bounds = quote! {
+                            where #ty: From<idol_runtime::ServerDeath>
+                        };
+                        quote! { #ty }
+                    }
+                    syntax::Error::ServerDeath => {
+                        quote! { core::convert::Infallible }
+                    }
+                };
+                quote! { Result<#ok, idol_runtime::RequestError<#err_ty>> }
+            },
+            syntax::Reply::Simple(t) => {
+                quote! { Result<#t, idol_runtime::RequestError<core::convert::Infallible>> }
+            },
+        };
+        quote! {
+            fn #name(
+                &mut self,
+                msg: &userlib::RecvMessage,
+                #( #args ),*,
+                #( #leases ),*
+            ) -> #ret_ty #error_type_bounds;
+        }
+    });
+    quote! {
+        pub trait #trt: idol_runtime::NotificationHandler {
+            fn recv_source(&self) -> Option<userlib::TaskId> {
+                None
+            }
+
+            fn closed_recv_fail(&mut self) {
+                panic!()
+            }
+
+            #( #ops )*
+        }
+    }
 }
 
 fn generate_server_section(
