@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use super::{common, syntax};
+use super::{common, syntax, GeneratorSettings};
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::env;
@@ -12,30 +12,33 @@ use std::path::PathBuf;
 pub fn build_client_stub(
     source: &str,
     stub_name: &str,
+    settings: &GeneratorSettings,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let stub_file = File::create(out.join(stub_name)).unwrap();
 
-    generate_client_stub_from_file(source, stub_file)?;
+    generate_client_stub_from_file(source, settings, stub_file)?;
     println!("cargo:rerun-if-changed={}", source);
     Ok(())
 }
 
 pub fn generate_client_stub_from_file(
     source: impl AsRef<std::path::Path>,
+    settings: &GeneratorSettings,
     out: impl std::io::Write,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let text = std::fs::read_to_string(source)?;
     let iface: syntax::Interface = ron::de::from_str(&text)?;
-    generate_client_stub(&iface, out)
+    generate_client_stub(&iface, settings, out)
 }
 
 pub fn generate_client_stub(
     iface: &syntax::Interface,
+    settings: &GeneratorSettings,
     mut out: impl std::io::Write,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut tokens = common::generate_op_enum(iface);
-    tokens.extend(client_stub_tokens(iface)?);
+    let mut tokens = common::generate_op_enum(iface, settings);
+    tokens.extend(client_stub_tokens(iface, settings)?);
     let formatted = common::fmt_tokens(tokens)?;
     write!(out, "{formatted}")?;
     Ok(())
@@ -43,6 +46,7 @@ pub fn generate_client_stub(
 
 fn client_stub_tokens(
     iface: &syntax::Interface,
+    settings: &GeneratorSettings,
 ) -> Result<TokenStream, Box<dyn std::error::Error + Send + Sync>> {
     let mut ops = Vec::with_capacity(iface.ops.len());
     let iface_name = &iface.name;

@@ -38,9 +38,17 @@ checksum = "5ad32ce52e4161730f7098c077cd2ed6229b5804ccf99e5366be1ab72a98b4e1"
 [[package]]
 name = "armv6m-atomic-hack"
 version = "0.1.0"
+source = "git+https://github.com/oxidecomputer/hubris?branch=eliza/auto-count#7d7be0de7daac6533b2ab3dd827d9705bfa7974a"
+dependencies = [
+ "build-util 0.1.0 (git+https://github.com/oxidecomputer/hubris?branch=eliza/auto-count)",
+]
+
+[[package]]
+name = "armv6m-atomic-hack"
+version = "0.1.0"
 source = "git+https://github.com/oxidecomputer/hubris#d4aba7b6a1ce0512309370141db001ad7043402d"
 dependencies = [
- "build-util",
+ "build-util 0.1.0 (git+https://github.com/oxidecomputer/hubris)",
 ]
 
 [[package]]
@@ -97,6 +105,20 @@ checksum = "bd769563b4ea2953e2825c9e6b7470a5f55f67e0be00030bf3e390a2a6071f64"
 [[package]]
 name = "build-util"
 version = "0.1.0"
+source = "git+https://github.com/oxidecomputer/hubris?branch=eliza/auto-count#7d7be0de7daac6533b2ab3dd827d9705bfa7974a"
+dependencies = [
+ "anyhow",
+ "indexmap 1.9.2",
+ "ordered-toml",
+ "serde",
+ "serde_json",
+ "toml",
+ "toml-task 0.1.0 (git+https://github.com/oxidecomputer/hubris?branch=eliza/auto-count)",
+]
+
+[[package]]
+name = "build-util"
+version = "0.1.0"
 source = "git+https://github.com/oxidecomputer/hubris#d4aba7b6a1ce0512309370141db001ad7043402d"
 dependencies = [
  "anyhow",
@@ -105,7 +127,7 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
- "toml-task",
+ "toml-task 0.1.0 (git+https://github.com/oxidecomputer/hubris)",
 ]
 
 [[package]]
@@ -166,16 +188,16 @@ dependencies = [
 [[package]]
 name = "counters"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/hubris#d4aba7b6a1ce0512309370141db001ad7043402d"
+source = "git+https://github.com/oxidecomputer/hubris?branch=eliza/auto-count#7d7be0de7daac6533b2ab3dd827d9705bfa7974a"
 dependencies = [
- "armv6m-atomic-hack",
+ "armv6m-atomic-hack 0.1.0 (git+https://github.com/oxidecomputer/hubris?branch=eliza/auto-count)",
  "counters-derive",
 ]
 
 [[package]]
 name = "counters-derive"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/hubris#d4aba7b6a1ce0512309370141db001ad7043402d"
+source = "git+https://github.com/oxidecomputer/hubris?branch=eliza/auto-count#7d7be0de7daac6533b2ab3dd827d9705bfa7974a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -690,6 +712,17 @@ dependencies = [
 [[package]]
 name = "toml-task"
 version = "0.1.0"
+source = "git+https://github.com/oxidecomputer/hubris?branch=eliza/auto-count#7d7be0de7daac6533b2ab3dd827d9705bfa7974a"
+dependencies = [
+ "anyhow",
+ "indexmap 1.9.2",
+ "ordered-toml",
+ "serde",
+]
+
+[[package]]
+name = "toml-task"
+version = "0.1.0"
 source = "git+https://github.com/oxidecomputer/hubris#d4aba7b6a1ce0512309370141db001ad7043402d"
 dependencies = [
  "anyhow",
@@ -743,9 +776,9 @@ version = "0.1.0"
 source = "git+https://github.com/oxidecomputer/hubris#d4aba7b6a1ce0512309370141db001ad7043402d"
 dependencies = [
  "abi",
- "armv6m-atomic-hack",
+ "armv6m-atomic-hack 0.1.0 (git+https://github.com/oxidecomputer/hubris)",
  "bstringify",
- "build-util",
+ "build-util 0.1.0 (git+https://github.com/oxidecomputer/hubris)",
  "cfg-if",
  "cortex-m",
  "num-derive",

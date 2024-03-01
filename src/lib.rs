@@ -8,6 +8,23 @@ pub(crate) mod serde_helpers;
 pub mod server;
 pub mod syntax;
 
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[must_use]
+pub struct GeneratorSettings {
+    pub(crate) counters: bool,
+}
+
+impl GeneratorSettings {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Generate event counters for each IPC operation.
+    pub fn with_counters(self, counters: bool) -> Self {
+        Self { counters, ..self }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

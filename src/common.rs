@@ -2,25 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use super::syntax;
+use super::{syntax, GeneratorSettings};
 use quote::quote;
-
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
-#[must_use]
-pub struct GeneratorSettings {
-    pub(crate) counters: bool,
-}
-
-impl GeneratorSettings {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Generate event counters for each IPC operation.
-    pub fn with_counters(self, counters: bool) -> Self {
-        Self { counters, ..self }
-    }
-}
 
 pub fn generate_op_enum(
     iface: &syntax::Interface,
@@ -41,9 +24,44 @@ pub fn generate_op_enum(
         }
     });
     let name = iface.name.as_op_enum();
-    let maybe_count = if settings.counters {
+    let counters = if settings.counters {
+        let enum_name = quote::format_ident!("{}Event", iface.name);
+        let counters_name = quote::format_ident!(
+            "__{}_OPERATION_COUNTERS",
+            iface.name.uppercase()
+        );
+        let lt = if iface
+            .ops
+            .values()
+            .any(|op| matches!(&op.reply, syntax::Reply::Result { .. }))
+        {
+            quote! { <'a> }
+        } else {
+            quote! {}
+        };
+        let variants = iface.ops.iter().map(|(opname, op)| match &op.reply {
+            syntax::Reply::Simple(_) => quote! { #opname },
+            syntax::Reply::Result { err, .. } => {
+                let err_ty = match err {
+                    syntax::Error::CLike(ty) | syntax::Error::Complex(ty) => {
+                        quote! { #ty }
+                    }
+                    syntax::Error::ServerDeath => {
+                        quote! { idol_runtime::ServerDeath }
+                    }
+                };
+                quote! {#opname(#[count(children)] &'a Result<(), #err_ty>) }
+            }
+        });
         quote! {
             #[derive(counters::Count)]
+            pub enum #enum_name #lt {
+                #(#variants),*
+            }
+
+            #[used]
+            static #counters_name: <#enum_name as counters::Count>::Counters =
+                <#enum_name as counters::Count>::NEW_COUNTERS;
         }
     } else {
         quote! {}
@@ -51,10 +69,11 @@ pub fn generate_op_enum(
     quote! {
         #[allow(non_camel_case_types)]
         #[derive(Copy, Clone, Debug, Eq, PartialEq, userlib::FromPrimitive)]
-        #maybe_count
         pub enum #name {
             #(#variants)*
         }
+
+        #counters
     }
 }
 

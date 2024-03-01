@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use super::{common, syntax};
+use super::{common, syntax, GeneratorSettings};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::BTreeMap;
@@ -19,8 +19,15 @@ pub fn build_server_support(
     source: &str,
     stub_name: &str,
     style: ServerStyle,
+    settings: &GeneratorSettings,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    build_restricted_server_support(source, stub_name, style, &BTreeMap::new())
+    build_restricted_server_support(
+        source,
+        stub_name,
+        style,
+        &BTreeMap::new(),
+        settings,
+    )
 }
 
 pub fn build_restricted_server_support(
@@ -28,14 +35,19 @@ pub fn build_restricted_server_support(
     stub_name: &str,
     style: ServerStyle,
     allowed_callers: &BTreeMap<String, Vec<usize>>,
+    settings: &GeneratorSettings,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let mut stub_file = File::create(out.join(stub_name)).unwrap();
 
     let text = std::fs::read_to_string(source)?;
     let iface: syntax::Interface = ron::de::from_str(&text)?;
-    let mut tokens =
-        generate_restricted_server_support(&iface, style, allowed_callers)?;
+    let mut tokens = generate_restricted_server_support(
+        &iface,
+        style,
+        allowed_callers,
+        settings,
+    )?;
 
     tokens.extend(generate_server_section(&iface, &text));
     let formatted = common::fmt_tokens(tokens)?;
@@ -52,6 +64,7 @@ pub fn generate_restricted_server_support(
     iface: &syntax::Interface,
     style: ServerStyle,
     allowed_callers: &BTreeMap<String, Vec<usize>>,
+    settings: &GeneratorSettings,
 ) -> Result<TokenStream, Box<dyn std::error::Error + Send + Sync>> {
     let mut tokens = quote! {
         #[allow(unused_imports)]
@@ -60,12 +73,12 @@ pub fn generate_restricted_server_support(
 
     tokens.extend(generate_server_constants(iface));
     tokens.extend(generate_server_conversions(iface));
-    tokens.extend(common::generate_op_enum(iface));
+    tokens.extend(common::generate_op_enum(iface, settings));
     tokens.extend(generate_server_op_impl(iface));
 
     tokens.extend(match style {
         ServerStyle::InOrder => {
-            generate_server_in_order_trait(iface, allowed_callers)?
+            generate_server_in_order_trait(iface, allowed_callers, settings)?
         }
     });
 
@@ -364,6 +377,7 @@ pub fn generate_server_op_impl(iface: &syntax::Interface) -> TokenStream {
 pub fn generate_server_in_order_trait(
     iface: &syntax::Interface,
     allowed_callers: &BTreeMap<String, Vec<usize>>,
+    settings: &GeneratorSettings,
 ) -> Result<TokenStream, Box<dyn std::error::Error + Send + Sync>> {
     // Ensure any operations listed in `allowed_callers` actually exist for this
     // server.
@@ -379,6 +393,12 @@ pub fn generate_server_in_order_trait(
     let iface_name = &iface.name;
     let trt = format_ident!("InOrder{iface_name}Impl");
     let trait_def = generate_trait_def(iface, &trt);
+    let counters_name = settings.counters.then(|| {
+        let static_name =
+            format_ident!("__{}_OPERATION_COUNTERS", iface.name.uppercase());
+        let enum_name = format_ident!("{}Event", iface.name.uppercase());
+        (static_name, enum_name)
+    });
 
     let enum_name = iface.name.as_op_enum();
     let op_cases = iface.ops.iter().map(|(opname, op)| {
@@ -517,15 +537,24 @@ pub fn generate_server_in_order_trait(
                 }
             };
             match &op.reply {
-                syntax::Reply::Simple(_) => quote! {
-                    match r {
-                        Ok(val) => {
-                            #encode
-                            Ok(())
+                syntax::Reply::Simple(_) => {
+                    let count = match counters_name {
+                        Some((ref counters, ref event_enum)) => quote! {
+                            counters::count!(#counters, #event_enum::#opname);
+                        },
+                        None => quote! {},
+                    };
+                    quote! {
+                        match r {
+                            Ok(val) => {
+                                #encode
+                                #count
+                                Ok(())
+                            }
+                            // Simple returns can only return ClientError. The compiler
+                            // can't see this. Jump through some hoops:
+                            Err(val) => Err(val.map_runtime(|e| match e {})),
                         }
-                        // Simple returns can only return ClientError. The compiler
-                        // can't see this. Jump through some hoops:
-                        Err(val) => Err(val.map_runtime(|e| match e {})),
                     }
                 },
                 syntax::Reply::Result{ err, .. } => {
@@ -568,7 +597,14 @@ pub fn generate_server_in_order_trait(
                             Err(val.map_runtime(|e| match e {}))
                         }
                     };
+                    let count = match counters_name {
+                        Some((ref counters, ref event_enum)) => quote! {
+                            counters::count!(#counters, #event_enum::#opname(&r));
+                        },
+                        None => quote! {},
+                    };
                     quote! {
+                        #count
                         match r {
                             Ok(val) => {
                                 #encode
@@ -595,11 +631,14 @@ pub fn generate_server_in_order_trait(
             }
         }
     });
+
     Ok(quote! {
         #trait_def
 
         #[automatically_derived]
-        impl <S: #trt> idol_runtime::Server<#enum_name> for (core::marker::PhantomData<#enum_name>, &'_ mut S) {
+        impl <S: #trt> idol_runtime::Server<#enum_name>
+            for (core::marker::PhantomData<#enum_name>, &'_ mut S)
+        {
             fn recv_source(&self) -> Option<userlib::TaskId> {
                 <S as #trt>::recv_source(self.1)
             }
@@ -607,6 +646,7 @@ pub fn generate_server_in_order_trait(
             fn closed_recv_fail(&mut self) {
                 <S as #trt>::closed_recv_fail(self.1)
             }
+
             fn handle(
                 &mut self,
                 op: #enum_name,
