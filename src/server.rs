@@ -266,8 +266,8 @@ pub fn generate_server_conversions(iface: &syntax::Interface) -> TokenStream {
                 match op.encoding {
                     syntax::Encoding::Zerocopy => quote! {
                         pub fn #read_fn(bytes: &[u8]) -> Option<&#struct_name> {
-                            zerocopy::LayoutVerified::<_, #struct_name>::new_unaligned(bytes)?
-                                .into_ref()
+                            Some(zerocopy::LayoutVerified::<_, #struct_name>::new_unaligned(bytes)?
+                                .into_ref())
                         }
                     },
                     syntax::Encoding::Ssmarshal => quote! {
