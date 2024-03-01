@@ -12,12 +12,11 @@ use std::path::PathBuf;
 pub fn build_client_stub(
     source: &str,
     stub_name: &str,
-    settings: &GeneratorSettings,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let stub_file = File::create(out.join(stub_name)).unwrap();
 
-    generate_client_stub_from_file(source, settings, stub_file)?;
+    generate_client_stub_from_file(source, &Default::default(), stub_file)?;
     println!("cargo:rerun-if-changed={}", source);
     Ok(())
 }

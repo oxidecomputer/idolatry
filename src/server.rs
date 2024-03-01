@@ -19,6 +19,19 @@ pub fn build_server_support(
     source: &str,
     stub_name: &str,
     style: ServerStyle,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    build_server_support_with_settings(
+        source,
+        stub_name,
+        style,
+        &GeneratorSettings::default(),
+    )
+}
+
+pub fn build_server_support_with_settings(
+    source: &str,
+    stub_name: &str,
+    style: ServerStyle,
     settings: &GeneratorSettings,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     build_restricted_server_support(
