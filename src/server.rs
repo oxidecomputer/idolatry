@@ -710,6 +710,6 @@ fn generate_server_section(
         // interface definition in a dedicated (unloaded) section
         #[used]
         #[link_section = ".idolatry"]
-        static #name: [u8; #len] = #byte_str;
+        static #name: [u8; #len] = *#byte_str;
     }
 }
