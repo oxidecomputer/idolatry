@@ -266,8 +266,7 @@ pub fn generate_server_conversions(iface: &syntax::Interface) -> TokenStream {
                 match op.encoding {
                     syntax::Encoding::Zerocopy => quote! {
                         pub fn #read_fn(bytes: &[u8]) -> Option<&#struct_name> {
-                            zerocopy::LayoutVerified::<_, #struct_name>::new_unaligned(bytes)
-                                .ok()
+                            zerocopy::LayoutVerified::<_, #struct_name>::new_unaligned(bytes)?
                                 .into_ref()
                         }
                     },
@@ -606,6 +605,7 @@ pub fn generate_server_in_order_trait(
             ) -> Result<(), idol_runtime::RequestError<u16>> {
                 #[allow(unused_imports)]
                 use core::convert::TryInto;
+                #[allow(unused_imports)]
                 use idol_runtime::ClientError;
                 match op {
                     #( #op_cases )*
