@@ -34,30 +34,38 @@ pub fn build_restricted_server_support(
 
     let text = std::fs::read_to_string(source)?;
     let iface: syntax::Interface = ron::de::from_str(&text)?;
+    let mut tokens =
+        generate_restricted_server_support(&iface, style, allowed_callers)?;
 
+    tokens.extend(generate_server_section(&iface, &text));
+    let formatted = common::fmt_tokens(tokens)?;
+    write!(stub_file, "{formatted}")?;
+    println!("cargo:rerun-if-changed={}", source);
+    Ok(())
+}
+
+pub fn generate_restricted_server_support(
+    iface: &syntax::Interface,
+    style: ServerStyle,
+    allowed_callers: &BTreeMap<syntax::Name, Vec<usize>>,
+) -> Result<TokenStream, Box<dyn std::error::Error + Send + Sync>> {
     let mut tokens = quote! {
         #[allow(unused_imports)]
         use userlib::UnwrapLite;
     };
 
-    tokens.extend(generate_server_constants(&iface));
-    tokens.extend(generate_server_conversions(&iface));
-    tokens.extend(common::generate_op_enum(&iface));
-    tokens.extend(generate_server_op_impl(&iface));
+    tokens.extend(generate_server_constants(iface));
+    tokens.extend(generate_server_conversions(iface));
+    tokens.extend(common::generate_op_enum(iface));
+    tokens.extend(generate_server_op_impl(iface));
 
-    match style {
+    tokens.extend(match style {
         ServerStyle::InOrder => {
-            generate_server_in_order_trait(
-                &iface,
-                &mut stub_file,
-                allowed_callers,
-            )?;
+            generate_server_in_order_trait(iface, allowed_callers)?
         }
-    }
+    });
 
-    generate_server_section(&iface, &text, &mut stub_file)?;
-    println!("cargo:rerun-if-changed={}", source);
-    Ok(())
+    Ok(tokens)
 }
 
 pub fn generate_server_constants(iface: &syntax::Interface) -> TokenStream {
@@ -162,11 +170,6 @@ pub fn generate_server_conversions(iface: &syntax::Interface) -> TokenStream {
                 syntax::Encoding::Zerocopy => quote! {
                     #[repr(C, packed)]
                     #[derive(Copy, Clone, zerocopy::FromBytes, zerocopy::Unaligned)]
-                    writeln!(out, "#[repr(C, packed)]")?;
-                    writeln!(
-                        out,
-                        ""
-                    )?;
                 },
                 syntax::Encoding::Ssmarshal => quote! {
                     #[derive(Copy, Clone, serde::Deserialize)]
@@ -199,7 +202,8 @@ pub fn generate_server_conversions(iface: &syntax::Interface) -> TokenStream {
                         }
                     }
                     syntax::RecvStrategy::FromBytes => {
-                        quote! {pub #argname: #arg.ty }
+                        let ty = &arg.ty;
+                        quote! {pub #argname: #ty }
                     }
                     syntax::RecvStrategy::FromPrimitive(ty)
                     | syntax::RecvStrategy::From(ty, _) => {
@@ -353,7 +357,6 @@ pub fn generate_server_op_impl(iface: &syntax::Interface) -> TokenStream {
 
 pub fn generate_server_in_order_trait(
     iface: &syntax::Interface,
-    mut out: impl Write,
     allowed_callers: &BTreeMap<syntax::Name, Vec<usize>>,
 ) -> Result<TokenStream, Box<dyn std::error::Error + Send + Sync>> {
     // Ensure any operations listed in `allowed_callers` actually exist for this
@@ -367,7 +370,8 @@ pub fn generate_server_in_order_trait(
         }
     }
 
-    let trt = format_ident!("InOrder{}Impl", iface.name);
+    let iface_name = &iface.name;
+    let trt = format_ident!("InOrder{iface_name}Impl");
 
     let trait_def = {
         let ops = iface.ops.iter().map(|(name, op)| {
@@ -378,10 +382,9 @@ pub fn generate_server_in_order_trait(
                 }
             });
             let leases = op.leases.iter().map(|(leasename, lease)| {
-
                 let r = if lease.read { "R" } else { ""};
                 let w = if lease.write { "W" } else { ""};
-                let lease_kind = format_ident!("{leasename}{r}{w}");
+                let lease_kind = format_ident!("{r}{w}");
                 let ty = &lease.ty;
                 if let Some(n) = lease.max_len {
                     let n = n.get();
@@ -407,13 +410,13 @@ pub fn generate_server_in_order_trait(
                                     where #ty: idol_runtime::IHaveConsideredServerDeathWithThisErrorType
                                 };
                             }
-                            quote! { #ty>}
+                            quote! { #ty }
                         }
                         syntax::Error::Complex(ty) => {
                             error_type_bounds = quote! {
                                 where #ty: From<idol_runtime::ServerDeath>
                             };
-                            quote! {#ty }
+                            quote! { #ty }
                         }
                         syntax::Error::ServerDeath => {
                             quote! { core::convert::Infallible }
@@ -445,11 +448,11 @@ pub fn generate_server_in_order_trait(
                 }
 
                 #( #ops )*
-            };
+            }
         }
     };
 
-    let enum_name = format_ident!("{}Operation", iface.name);
+    let enum_name = format_ident!("{iface_name}Operation");
     let op_cases = iface.ops.iter().map(|(opname, op)| {
         let check_allowed = if let Some(allowed_callers) = allowed_callers.get(opname) {
             // With our current optimization settings and rustc/llvm version,
@@ -545,8 +548,7 @@ pub fn generate_server_in_order_trait(
                 (format_ident!("{fun}_slice"), max_len)
             } else {
                 if lease.max_len.is_some() {
-                    panic!("Lease {} on operation {}.{} has sized type but also max_len field",
-                        i, iface.name, opname);
+                    panic!("Lease {i} on operation {iface_name}.{opname} has sized type but also max_len field");
                 }
                 (format_ident!("{fun}"), quote!{} )
             };
@@ -561,110 +563,88 @@ pub fn generate_server_in_order_trait(
                 idol_runtime::Leased::#fun(rm.sender, #i #limit).ok_or_else(|| ClientError::BadLease.fail())?#maybe_unwrap
             }
         });
-        let reply = quote! { todo!("eliza: all this stuff is to actually do the reply part... :("); };
-        // match &op.reply {
-        //     syntax::Reply::Simple(_t) => {
-        //         writeln!(out, "                match r {{")?;
-        //         writeln!(out, "                    Ok(val) => {{")?;
-        //         match op.encoding {
-        //             syntax::Encoding::Zerocopy => {
-        //                 writeln!(out, "                        userlib::sys_reply(rm.sender, 0, zerocopy::AsBytes::as_bytes(&val));")?;
-        //             }
-        //             syntax::Encoding::Ssmarshal => {
-        //                 writeln!(out, "                        let mut reply_buf = [0u8; {}_REPLY_SIZE];",
-        //                     opname.to_uppercase())?;
-        //                 writeln!(out, "                        let n_reply = ssmarshal::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap_lite();")?;
-        //                 writeln!(out, "                        userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);")?;
-        //             }
-        //             syntax::Encoding::Hubpack => {
-        //                 writeln!(out, "                        let mut reply_buf = [0u8; {}_REPLY_SIZE];",
-        //                     opname.to_uppercase())?;
-        //                 writeln!(out, "                        let n_reply = hubpack::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap_lite();")?;
-        //                 writeln!(out, "                        userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);")?;
-        //             }
-        //         }
-        //         writeln!(out, "                        Ok(())")?;
-        //         writeln!(out, "                    }}")?;
-        //         // Simple returns can only return ClientError. The compiler
-        //         // can't see this. Jump through some hoops:
-        //         writeln!(out, "                    Err(val) => Err(val.map_runtime(|e| match e {{ }})),")?;
-        //         writeln!(out, "                }}")?;
-        //     }
-        //     syntax::Reply::Result { err, .. } => {
-        //         writeln!(out, "                match r {{")?;
-        //         writeln!(out, "                    Ok(val) => {{")?;
-        //         match op.encoding {
-        //             syntax::Encoding::Zerocopy => {
-        //                 writeln!(out, "                        userlib::sys_reply(rm.sender, 0, zerocopy::AsBytes::as_bytes(&val));")?;
-        //             }
-        //             syntax::Encoding::Ssmarshal => {
-        //                 writeln!(out, "                        let mut reply_buf = [0u8; {}_REPLY_SIZE];",
-        //                     opname.to_uppercase())?;
-        //                 writeln!(out, "                        let n_reply = ssmarshal::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap_lite();")?;
-        //                 writeln!(out, "                        userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);")?;
-        //             }
-        //             syntax::Encoding::Hubpack => {
-        //                 writeln!(out, "                        let mut reply_buf = [0u8; {}_REPLY_SIZE];",
-        //                     opname.to_uppercase())?;
-        //                 writeln!(out, "                        let n_reply = hubpack::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap_lite();")?;
-        //                 writeln!(out, "                        userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);")?;
-        //             }
-        //         }
-        //         writeln!(out, "                        Ok(())")?;
-        //         writeln!(out, "                    }}")?;
-        //         writeln!(out, "                    Err(val) => {{")?;
-        //         match err {
-        //             syntax::Error::Complex(ty) => {
-        //                 // It might be surprising, but to return a complex error
-        //                 // we need to behave very much like the reply code
-        //                 // above: rather than returning `Err`, we need to
-        //                 // perform an actual `sys_reply` and then return `Ok` to
-        //                 // avoid triggering the reply handling code in the
-        //                 // generic dispatch loop.
-        //                 //
-        //                 // So, the fact that this error returns `Ok` is not a
-        //                 // bug.
-        //                 match op.encoding {
-        //                     syntax::Encoding::Hubpack => {
-        //                         writeln!(out, "                        match val {{")?;
-        //                         writeln!(out, "                            idol_runtime::RequestError::Fail(f) => {{")?;
-        //                         // Note: because of the way `into_fault` works,
-        //                         // if it returns None, we don't send a reply at
-        //                         // all. This is because None indicates that the
-        //                         // caller was restarted or otherwise crashed
-        //                         // while waiting.
-        //                         writeln!(out, "                                if let Some(fault) = f.into_fault() {{")?;
-        //                         writeln!(out, "                                    userlib::sys_reply_fault(rm.sender, fault);")?;
-        //                         writeln!(out, "                                }}")?;
-        //                         writeln!(out, "                            }}")?;
-        //                         writeln!(out, "                            idol_runtime::RequestError::Runtime(e) => {{")?;
-        //                         writeln!(out, "                                let mut reply_buf = [0u8; <{ty} as hubpack::SerializedSize>::MAX_SIZE];")?;
-        //                         writeln!(out, "                                let n_reply = hubpack::serialize(&mut reply_buf, &e).map_err(|_| ()).unwrap_lite();")?;
-        //                         writeln!(out, "                                userlib::sys_reply(rm.sender, 1, &reply_buf[..n_reply]);")?;
-        //                         writeln!(out, "                            }}")?;
-        //                         writeln!(out, "                        }}")?;
-        //                     }
-        //                     _ => panic!("Complex error types not supported for {:?} encoding", op.encoding),
-        //                 }
-        //                 writeln!(out, "                        Ok(())")?;
-        //             }
-        //             syntax::Error::CLike(_) => {
-        //                 writeln!(
-        //                     out,
-        //                     "                        Err(val.map_runtime(u16::from))"
-        //                 )?;
-        //             }
-        //             syntax::Error::ServerDeath => {
-        //                 writeln!(
-        //                     out,
-        //                     "                        Err(val.map_runtime(|e| match e {{ }}))"
-        //                 )?;
-        //             }
-        //         }
-        //         writeln!(out, "                    }}")?;
-        //         writeln!(out, "                }}")?;
-        //     }
-        // };
+        let reply = {
+            let encode = match op.encoding {
+                syntax::Encoding::Zerocopy => quote! {
+                    userlib::sys_reply(rm.sender, 0, zerocopy::AsBytes::as_bytes(&val));
+                },
+                syntax::Encoding::Hubpack | syntax::Encoding::Ssmarshal => {
+                    let reply_size = format_ident!("{}_REPLY_SIZE", opname.to_string().to_uppercase());
+                    let serializer = op.encoding.crate_name();
+                    quote! {
+                        let mut reply_buf = [0u8; #reply_size];
+                        let n_reply = #serializer::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap_lite();
+                        userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);
+                    }
+                }
+            };
+            match &op.reply {
+                syntax::Reply::Simple(_) => quote! {
+                    match r {
+                        Ok(val) => {
+                            #encode
+                            Ok(())
+                        }
+                        // Simple returns can only return ClientError. The compiler
+                        // can't see this. Jump through some hoops:
+                        Err(val) => Err(val.map_runtime(|e| match e {})),
+                    }
+                },
+                syntax::Reply::Result{ err, .. } => {
+                    let err_case = match err {
+
+                        // It might be surprising, but to return a complex error
+                        // we need to behave very much like the reply code
+                        // above: rather than returning `Err`, we need to
+                        // perform an actual `sys_reply` and then return `Ok` to
+                        // avoid triggering the reply handling code in the
+                        // generic dispatch loop.
+                        //
+                        // So, the fact that this error returns `Ok` is not a
+                        // bug.
+                        syntax::Error::Complex (ty) =>  match op.encoding {
+                            syntax::Encoding::Hubpack => quote! {
+                                match val {
+                                    idol_runtime::RequestError::Fail(f) => {
+                                        // Note: because of the way `into_fault` works,
+                                        // if it returns None, we don't send a reply at
+                                        // all. This is because None indicates that the
+                                        // caller was restarted or otherwise crashed
+                                        if let Some(fault) = f.into_fault() {
+                                                userlib::sys_reply_fault(rm.sender, fault);
+                                        }
+                                    }
+                                    idol_runtime::RequestError::Runtime(e) => {
+                                        let mut reply_buf = [0u8; <#ty as hubpack::SerializedSize>::MAX_SIZE];
+                                        let n_reply = hubpack::serialize(&mut reply_buf, &e).map_err(|_| ()).unwrap_lite();
+                                        userlib::sys_reply(rm.sender, 1, &reply_buf[..n_reply]);
+                                    }
+                                }
+                                Ok(())
+                            },
+                            encoding => panic!("Complex error types not supported for {encoding:?} encoding"),
+                        },
+                        syntax::Error::CLike(_) => quote! {
+                            Err(val.map_runtime(u16::from))
+                        },
+                        syntax::Error::ServerDeath => quote! {
+                            Err(val.map_runtime(|e| match e {}))
+                        }
+                    };
+                    quote! {
+                        match r {
+                            Ok(val) => {
+                                #encode
+                                Ok(())
+                            }
+                            Err(val) => {
+                                #err_case
+                            }
+                        }
+                    }
+                }
+            }
+        };
         quote! {
             #enum_name::#opname => {
                 #check_allowed
@@ -709,29 +689,19 @@ pub fn generate_server_in_order_trait(
 fn generate_server_section(
     iface: &syntax::Interface,
     text: &str,
-    mut out: impl Write,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    todo!("eliza: this part")
-    //     let bytes = text.as_bytes();
-
-    //     write!(
-    //         out,
-    //         r##"
-    // // To allow it to be pulled out by debuggers, we drop the entirety of the
-    // // interface definition in a dedicated (unloaded) section
-    // #[used]
-    // #[link_section = ".idolatry"]
-    // static _{}_IDOL_DEFINITION: [u8; {}] = ["##,
-    //         iface.name.to_uppercase(),
-    //         text.len()
-    //     )?;
-
-    //     for (i, byte) in bytes.iter().enumerate() {
-    //         let delim = if i % 10 == 0 { "\n    " } else { " " };
-    //         write!(out, "{}0x{:02x},", delim, byte)?;
-    //     }
-
-    //     writeln!(out, "\n];\n")?;
-
-    //     Ok(())
+) -> TokenStream {
+    let name = format_ident!(
+        "_{}_IDOL_DEFINITION",
+        iface.name.to_string().to_uppercase()
+    );
+    let bytes = text.as_bytes();
+    let len = bytes.len();
+    let byte_str = syn::LitByteStr::new(bytes, proc_macro2::Span::call_site());
+    quote! {
+        // To allow it to be pulled out by debuggers, we drop the entirety of the
+        // interface definition in a dedicated (unloaded) section
+        #[used]
+        #[link_section = ".idolatry"]
+        static #name: [u8; #len] = #byte_str;
+    }
 }

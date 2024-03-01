@@ -150,6 +150,22 @@ impl Default for Encoding {
     }
 }
 
+impl Encoding {
+    pub fn crate_name(&self) -> syn::Ident {
+        match self {
+            Self::Zerocopy => {
+                syn::Ident::new("zerocopy", proc_macro2::Span::call_site())
+            }
+            Self::Ssmarshal => {
+                syn::Ident::new("ssmarshal", proc_macro2::Span::call_site())
+            }
+            Self::Hubpack => {
+                syn::Ident::new("hubpack", proc_macro2::Span::call_site())
+            }
+        }
+    }
+}
+
 /// Description of a lease expected by an operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Lease {

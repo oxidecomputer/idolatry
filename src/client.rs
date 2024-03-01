@@ -36,8 +36,7 @@ pub fn generate_client_stub(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut tokens = common::generate_op_enum(iface);
     tokens.extend(client_stub_tokens(iface)?);
-    let syntax_tree = syn::parse2::<syn::File>(tokens)?;
-    let formatted = prettyplease::unparse(&syntax_tree);
+    let formatted = common::fmt_tokens(tokens)?;
     write!(out, "{formatted}")?;
     Ok(())
 }

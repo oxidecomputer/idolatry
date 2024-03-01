@@ -21,3 +21,10 @@ pub fn generate_op_enum(iface: &syntax::Interface) -> proc_macro2::TokenStream {
         }
     }
 }
+
+pub(crate) fn fmt_tokens(
+    tokens: proc_macro2::TokenStream,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let syntax_tree = syn::parse2::<syn::File>(tokens)?;
+    Ok(prettyplease::unparse(&syntax_tree))
+}
