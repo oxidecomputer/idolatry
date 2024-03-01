@@ -81,20 +81,21 @@ impl From<ClientError> for u32 {
     }
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "counters", derive(counters::Count))]
+// XXX(eliza): apparently the whole thing has to be `cfg`'d, because `cfg_attr`
+// doesn't seem to play nicely with proc-macro attributes. I'm not sure why...
+#[cfg(feature = "counters")]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, counters::Count)]
 #[repr(u32)]
 pub enum RequestError<E> {
-    // XXX(eliza): the whole variant apparently has to be `cfg`'d, because rustc
-    // apparently doesn't like a `#[cfg_attr]` inside of a variant
-    #[cfg(feature = "counters")]
     Runtime(#[count(children)] E),
-    #[cfg(not(feature = "counters"))]
-    Runtime(E),
-
-    #[cfg(feature = "counters")]
     Fail(#[count(children)] ClientError),
-    #[cfg(not(feature = "counters"))]
+}
+
+#[cfg(not(feature = "counters"))]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum RequestError<E> {
+    Runtime(E),
     Fail(ClientError),
 }
 
