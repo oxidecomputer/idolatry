@@ -82,11 +82,20 @@ impl From<ClientError> for u32 {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(u32)]
 #[cfg_attr(feature = "counters", derive(counters::Count))]
+#[repr(u32)]
 pub enum RequestError<E> {
-    Runtime(#[cfg_attr(feature = "counters", count(children))] E),
-    Fail(#[cfg_attr(feature = "counters", count(children))] ClientError),
+    // XXX(eliza): the whole variant apparently has to be `cfg`'d, because rustc
+    // apparently doesn't like a `#[cfg_attr]` inside of a variant
+    #[cfg(feature = "counters")]
+    Runtime(#[count(children)] E),
+    #[cfg(not(feature = "counters"))]
+    Runtime(E),
+
+    #[cfg(feature = "counters")]
+    Fail(#[count(children)] ClientError),
+    #[cfg(not(feature = "counters"))]
+    Fail(ClientError),
 }
 
 impl<E> RequestError<E> {
