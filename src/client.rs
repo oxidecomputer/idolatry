@@ -141,13 +141,7 @@ fn client_stub_tokens(
                     .map(|name| quote::format_ident!("arg_{name}"));
                 args.chain(leases)
             };
-            let argvals = {
-                let args =
-                    op.args.keys().map(|name| quote::format_ident!("{name}"));
-                let leases =
-                    op.leases.keys().map(|name| quote::format_ident!("{name}"));
-                args.chain(leases)
-            };
+            let argvals = op.args.keys().chain(op.leases.keys());
             quote! {
                 let (
                     #(#argnames),*
