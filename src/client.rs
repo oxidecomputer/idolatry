@@ -521,7 +521,12 @@ fn client_stub_tokens(
         #[allow(clippy::let_unit_value,
                 clippy::collapsible_else_if,
                 clippy::needless_return,
-                clippy::unused_unit)]
+                clippy::unused_unit,
+                // code generation may include unnecessary braces and/or parens
+                // if it doesn't know whether a block contains one or more
+                // expressions.
+                unused_braces,
+                unused_parens)]
         #[automatically_derived]
         impl #iface_name {
             #(#ops)*
