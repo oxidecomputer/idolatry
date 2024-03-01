@@ -321,7 +321,7 @@ fn client_stub_tokens(
                     &[
                         #( #leases ),*
                     ],
-                )?;
+                );
             }
         };
 
