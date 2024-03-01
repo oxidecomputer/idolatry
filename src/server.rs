@@ -546,16 +546,16 @@ pub fn generate_server_in_order_trait(
                     quote!{ , None }
                 };
                 (format_ident!("{fun}_slice"), max_len)
+            } else if lease.max_len.is_some() {
+                panic!(
+                    "Lease {i} ({leasename}) on operation {iface_name}.{opname} \
+                    has sized type but also max_len field"
+                );
             } else {
-                if lease.max_len.is_some() {
-                    panic!("Lease {i} on operation {iface_name}.{opname} has sized type but also max_len field");
-                }
                 (format_ident!("{fun}"), quote!{} )
             };
             let maybe_unwrap = if lease.max_len.is_some() {
-                quote! {
-                    .try_into().unwrap_lite()
-                }
+                quote! { .try_into().unwrap_lite() }
             } else {
                 quote!{}
             };
