@@ -331,7 +331,7 @@ pub fn generate_server_op_impl(iface: &syntax::Interface) -> TokenStream {
     let max_reply_size_cases = iface.ops.keys().map(|opname| {
         let reply_size = opname.as_reply_size();
         quote! {
-            Self::#opname => #reply_size,
+            Self::#opname => #reply_size
         }
     });
     let required_leases_cases = iface.ops.iter().map(|(opname, op)| {
@@ -579,7 +579,7 @@ pub fn generate_server_in_order_trait(
                 #read
                 let r = self.1.#opname(
                     rm,
-                    #( #args ),*,
+                    #( #args ),*
                     #( #leases ),*
                 );
                 #reply
@@ -677,7 +677,7 @@ fn generate_trait_def(
             fn #name(
                 &mut self,
                 msg: &userlib::RecvMessage,
-                #( #args ),*,
+                #( #args ),*
                 #( #leases ),*
             ) -> #ret_ty #error_type_bounds;
         }
