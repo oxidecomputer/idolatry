@@ -352,10 +352,6 @@ pub struct AttributedTy {
 }
 
 impl AttributedTy {
-    // pub fn display(&self) -> &impl std::fmt::Display {
-    //     &self.ty.0
-    // }
-
     /// Returns the Rust type that should be used to represent this in the
     /// internal args/reply structs.
     pub fn repr_ty(&self) -> syn::Type {
@@ -364,7 +360,7 @@ impl AttributedTy {
                 t.0.clone()
             }
             RecvStrategy::FromBytes if self.ty.is_bool() => {
-                syn::parse_quote! { bool }
+                syn::parse_quote! { u8 }
             }
             RecvStrategy::FromBytes => self.ty.0.clone(),
         }
