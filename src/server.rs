@@ -330,13 +330,13 @@ pub fn generate_server_op_impl(iface: &syntax::Interface) -> TokenStream {
     let max_reply_size_cases = iface.ops.keys().map(|opname| {
         let reply_size = opname.as_reply_size();
         quote! {
-            Self::#opname => #reply_size
+            Self::#opname => #reply_size,
         }
     });
     let required_leases_cases = iface.ops.iter().map(|(opname, op)| {
         let leases = op.leases.len();
         quote! {
-            Self::#opname => #leases
+            Self::#opname => #leases,
         }
     });
     quote! {
@@ -344,13 +344,13 @@ pub fn generate_server_op_impl(iface: &syntax::Interface) -> TokenStream {
         impl idol_runtime::ServerOp for #op_enum {
             fn max_reply_size(self) -> usize {
                 match self {
-                    #( #max_reply_size_cases ),*
+                    #( #max_reply_size_cases )*
                 }
             }
 
             fn required_lease_count(self) -> usize {
                 match self {
-                    #( #required_leases_cases ),*
+                    #( #required_leases_cases )*
                 }
             }
         }
@@ -430,24 +430,24 @@ pub fn generate_server_in_order_trait(
                         quote! { #argname }
                     };
                     quote! {
-                        args.#thingy
+                        args.#thingy,
                     }
                 },
                 syntax::RecvStrategy::From(_, None) => {
                     let name = argname.raw_prefixed();
                     quote! {
-                        args.#name.into()
+                        args.#name.into(),
                     }
                 }
                 syntax::RecvStrategy::From(_, Some(f)) => {
                     let name = argname.raw_prefixed();
                     quote! {
-                        #f(args.#name)
+                        #f(args.#name),
                     }
                 }
                 syntax::RecvStrategy::FromPrimitive(_) => {
                     quote! {
-                        args.#argname().ok_or_else(|| idol_runtime::ClientError::BadMessageContents.fail())?
+                        args.#argname().ok_or_else(|| idol_runtime::ClientError::BadMessageContents.fail())?,
                     }
                 }
             }
@@ -488,7 +488,7 @@ pub fn generate_server_in_order_trait(
                 quote!{}
             };
             quote! {
-                idol_runtime::Leased::#fun(rm.sender, #i #limit).ok_or_else(|| ClientError::BadLease.fail())?#maybe_unwrap
+                idol_runtime::Leased::#fun(rm.sender, #i #limit).ok_or_else(|| ClientError::BadLease.fail())?#maybe_unwrap,
             }
         });
         let reply = {
@@ -578,8 +578,8 @@ pub fn generate_server_in_order_trait(
                 #read
                 let r = self.1.#opname(
                     rm,
-                    #( #args ),*
-                    #( #leases ),*
+                    #( #args )*
+                    #( #leases )*
                 );
                 #reply
             }
@@ -623,7 +623,7 @@ fn generate_trait_def(
         let args = op.args.iter().map(|(argname, arg)| {
             let ty = &arg.ty;
             quote! {
-                #argname: #ty
+                #argname: #ty,
             }
         });
         let leases = op.leases.iter().map(|(leasename, lease)| {
@@ -634,11 +634,11 @@ fn generate_trait_def(
             if let Some(n) = lease.max_len {
                 let n = n.get();
                 quote! {
-                    #leasename: idol_runtime::LenLimit<idol_runtime::Leased<idol_runtime::#lease_kind, #ty>, #n>
+                    #leasename: idol_runtime::LenLimit<idol_runtime::Leased<idol_runtime::#lease_kind, #ty>, #n>,
                 }
             } else {
                 quote! {
-                    #leasename: idol_runtime::Leased<idol_runtime::#lease_kind, #ty>
+                    #leasename: idol_runtime::Leased<idol_runtime::#lease_kind, #ty>,
                 }
             }
         });
@@ -677,8 +677,8 @@ fn generate_trait_def(
             fn #name(
                 &mut self,
                 msg: &userlib::RecvMessage,
-                #( #args ),*
-                #( #leases ),*
+                #( #args )*
+                #( #leases )*
             ) -> #ret_ty #error_type_bounds;
         }
     });
