@@ -632,7 +632,10 @@ fn generate_trait_def(
             let lease_kind = format_ident!("{r}{w}");
             let ty = &lease.ty;
             if let Some(n) = lease.max_len {
-                let n = n.get();
+                // cast to usize here is load bearing, because `quote` will
+                // suffix this with `{n}u32` when interpolating, but it needs to
+                // be a `usize`.
+                let n = n.get() as usize;
                 quote! {
                     #leasename: idol_runtime::LenLimit<idol_runtime::Leased<idol_runtime::#lease_kind, #ty>, #n>,
                 }
