@@ -15,7 +15,15 @@ use std::num::NonZeroU32;
 
 /// An identifier.
 #[derive(
-    Clone, Debug, Eq, PartialEq, Hash, SerializeDisplay, DeserializeFromStr,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    SerializeDisplay,
+    DeserializeFromStr,
 )]
 pub struct Name(pub syn::Ident);
 
