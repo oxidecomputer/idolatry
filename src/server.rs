@@ -72,9 +72,8 @@ pub fn generate_server_constants(iface: &syntax::Interface) -> TokenStream {
     // Generate message sizing constants for each message.
     let mut msgsize_names = Vec::with_capacity(iface.ops.len());
     let consts = iface.ops.iter().map(|(name, op)| {
-        let upper_name = name.to_string().to_uppercase();
         let msg_size = {
-            let const_name = format_ident!("{upper_name}_MSG_SIZE");
+            let const_name = format_ident!("{}_MSG_SIZE", name.uppercase());
             let val = match op.encoding {
                 // Zerocopy moves fields as a packed struct, so the sum of input
                 // type sizes is sufficient to fit the message.
@@ -110,7 +109,7 @@ pub fn generate_server_constants(iface: &syntax::Interface) -> TokenStream {
             tokens
         };
         let reply_size = {
-            let const_name = format_ident!("{upper_name}_REPLY_SIZE");
+            let const_name = format_ident!("{}_REPLY_SIZE", name.uppercase());
             let val = match &op.reply {
                 syntax::Reply::Result { ok, .. } => {
                     // This strategy only uses bytes for the OK side of the type,
@@ -297,8 +296,9 @@ pub fn generate_server_conversions(iface: &syntax::Interface) -> TokenStream {
                 if let syntax::Encoding::Zerocopy = op.encoding {
                     let reply_ty = format_ident!("{}_{name}_REPLY", iface.name);
                     let static_name = format_ident!(
-                        "{}",
-                        reply_ty.to_string().to_uppercase()
+                        "{}_{}_REPLY",
+                        iface.name.uppercase(),
+                        name.uppercase(),
                     );
                     reply_ty_def = quote! {
                         #[repr(C, packed)]
@@ -326,8 +326,7 @@ pub fn generate_server_conversions(iface: &syntax::Interface) -> TokenStream {
 pub fn generate_server_op_impl(iface: &syntax::Interface) -> TokenStream {
     let op_enum = format_ident!("{}Operation", iface.name);
     let max_reply_size_cases = iface.ops.keys().map(|opname| {
-        let reply_size =
-            format_ident!("{}_REPLY_SIZE", opname.0.to_string().to_uppercase());
+        let reply_size = format_ident!("{}_REPLY_SIZE", opname.uppercase());
         quote! {
             Self::#opname => #reply_size,
         }
@@ -492,7 +491,7 @@ pub fn generate_server_in_order_trait(
                     userlib::sys_reply(rm.sender, 0, zerocopy::AsBytes::as_bytes(&val));
                 },
                 syntax::Encoding::Hubpack | syntax::Encoding::Ssmarshal => {
-                    let reply_size = format_ident!("{}_REPLY_SIZE", opname.to_string().to_uppercase());
+                    let reply_size = format_ident!("{}_REPLY_SIZE", opname.uppercase());
                     let serializer = op.encoding.crate_name();
                     quote! {
                         let mut reply_buf = [0u8; #reply_size];
@@ -695,10 +694,7 @@ fn generate_server_section(
     iface: &syntax::Interface,
     text: &str,
 ) -> TokenStream {
-    let name = format_ident!(
-        "_{}_IDOL_DEFINITION",
-        iface.name.to_string().to_uppercase()
-    );
+    let name = format_ident!("_{}_IDOL_DEFINITION", iface.name.uppercase());
     let bytes = text.as_bytes();
     let len = bytes.len();
     let byte_str = syn::LitByteStr::new(bytes, proc_macro2::Span::call_site());

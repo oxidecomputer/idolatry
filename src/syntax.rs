@@ -25,34 +25,51 @@ use std::num::NonZeroU32;
     SerializeDisplay,
     DeserializeFromStr,
 )]
-pub struct Name(pub syn::Ident);
+pub struct Name {
+    pub ident: syn::Ident,
+    /// A bunch of code generation makes constants, which require an uppercase
+    /// version of identifiers. Thus, we cache this to reduce the number of
+    /// strings we allocate a bunch of times during codegen.
+    ///
+    /// This is, admittedly, a kind of goofy microoptimization that probably
+    /// doesn't matter that much.
+    uppercase: String,
+}
 
 impl std::fmt::Display for Name {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        self.0.fmt(f)
+        self.ident.fmt(f)
     }
 }
 
 impl std::str::FromStr for Name {
     type Err = syn::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        syn::parse_str(s).map(Self)
+        let ident = syn::parse_str(s)?;
+        let uppercase = s.to_uppercase();
+        Ok(Self { ident, uppercase })
     }
 }
 
 impl quote::ToTokens for Name {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        self.0.to_tokens(tokens)
+        self.ident.to_tokens(tokens)
     }
 }
 
 impl quote::IdentFragment for Name {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        quote::IdentFragment::fmt(&self.0, f)
+        quote::IdentFragment::fmt(&self.ident, f)
     }
 
     fn span(&self) -> Option<proc_macro2::Span> {
-        quote::IdentFragment::span(&self.0)
+        quote::IdentFragment::span(&self.ident)
+    }
+}
+
+impl Name {
+    pub(crate) fn uppercase(&self) -> &str {
+        &self.uppercase
     }
 }
 
