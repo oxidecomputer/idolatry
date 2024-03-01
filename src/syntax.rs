@@ -18,7 +18,9 @@ use std::num::NonZeroU32;
 #[derive(Debug, SerializeDisplay, DeserializeFromStr)]
 pub struct Name {
     pub ident: syn::Ident,
-
+    /// Necessary to stop syn from rendering the underlying string repr
+    /// inaccessible, used for map lookups.
+    as_string: String,
     // A bunch of code generation uses input identifiers to construct other
     // identifiers, such as prefixing or uppercasing, multiple times for the
     // same identifier. Thus, we cache these to reduce the number of
@@ -52,6 +54,7 @@ impl std::str::FromStr for Name {
         let ident = syn::parse_str(s)?;
         let uppercase = s.to_uppercase();
         Ok(Self {
+            as_string: s.to_string(),
             ident,
             arg_name: OnceCell::new(),
             reply_size: OnceCell::new(),
@@ -107,6 +110,7 @@ impl std::hash::Hash for Name {
 impl Clone for Name {
     fn clone(&self) -> Self {
         Self {
+            as_string: self.as_string.clone(),
             ident: self.ident.clone(),
             uppercase: self.uppercase.clone(),
             arg_name: OnceCell::new(),
@@ -118,6 +122,10 @@ impl Clone for Name {
 }
 
 impl Name {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.as_string
+    }
+
     pub(crate) fn uppercase(&self) -> &str {
         &self.uppercase
     }
@@ -141,6 +149,12 @@ impl Name {
     pub(crate) fn as_op_enum(&self) -> &syn::Ident {
         self.op_enum
             .get_or_init(|| quote::format_ident!("{self}Operation"))
+    }
+}
+
+impl std::borrow::Borrow<str> for Name {
+    fn borrow(&self) -> &str {
+        self.as_str()
     }
 }
 

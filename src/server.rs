@@ -23,15 +23,11 @@ pub fn build_server_support(
     build_restricted_server_support(source, stub_name, style, &BTreeMap::new())
 }
 
-// `Name` is only mutable as it contains `OnceCell`s, but they don't effect its
-// `Hash`, `PartialEq`, `Eq`, `Ord`, or `PartialOrd` implementations. So, it can
-// safely be used as a map key.
-#[allow(clippy::mutable_key_type)]
 pub fn build_restricted_server_support(
     source: &str,
     stub_name: &str,
     style: ServerStyle,
-    allowed_callers: &BTreeMap<syntax::Name, Vec<usize>>,
+    allowed_callers: &BTreeMap<String, Vec<usize>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let mut stub_file = File::create(out.join(stub_name)).unwrap();
@@ -55,7 +51,7 @@ pub fn build_restricted_server_support(
 pub fn generate_restricted_server_support(
     iface: &syntax::Interface,
     style: ServerStyle,
-    allowed_callers: &BTreeMap<syntax::Name, Vec<usize>>,
+    allowed_callers: &BTreeMap<String, Vec<usize>>,
 ) -> Result<TokenStream, Box<dyn std::error::Error + Send + Sync>> {
     let mut tokens = quote! {
         #[allow(unused_imports)]
@@ -368,12 +364,12 @@ pub fn generate_server_op_impl(iface: &syntax::Interface) -> TokenStream {
 #[allow(clippy::mutable_key_type)]
 pub fn generate_server_in_order_trait(
     iface: &syntax::Interface,
-    allowed_callers: &BTreeMap<syntax::Name, Vec<usize>>,
+    allowed_callers: &BTreeMap<String, Vec<usize>>,
 ) -> Result<TokenStream, Box<dyn std::error::Error + Send + Sync>> {
     // Ensure any operations listed in `allowed_callers` actually exist for this
     // server.
     for opname in allowed_callers.keys() {
-        if !iface.ops.contains_key(opname) {
+        if !iface.ops.contains_key(opname.as_str()) {
             return Err(Box::from(format!(
                 "allowed_callers operation `{}` does not exist for this server",
                 opname
@@ -387,7 +383,7 @@ pub fn generate_server_in_order_trait(
 
     let enum_name = iface.name.as_op_enum();
     let op_cases = iface.ops.iter().map(|(opname, op)| {
-        let check_allowed = if let Some(allowed_callers) = allowed_callers.get(opname) {
+        let check_allowed = if let Some(allowed_callers) = allowed_callers.get(opname.as_str()) {
             // With our current optimization settings and rustc/llvm version,
             // the compiler generates better code for raw `if` checks than it
             // does for the more general `[T;N].contains(&T)`. We'll do a bit of
