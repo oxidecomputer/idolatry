@@ -148,7 +148,10 @@ fn client_stub_tokens(
         // Perform lease validation.
         let lease_validators =
             op.leases.iter().filter_map(|(leasename, lease)| {
-                let n = lease.max_len?.get();
+                // cast to usize here is load bearing, because `quote` will
+                // suffix this with `{n}u32` when interpolating, but `.len()`
+                // returns a `usize`. blah!
+                let n = lease.max_len?.get() as usize;
                 let argname = leasename.arg_prefixed();
                 // Note: we're not generating a panic message in the client to
                 // save ROM space. If the user chases the line number into the
