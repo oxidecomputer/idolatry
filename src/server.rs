@@ -339,6 +339,7 @@ pub fn generate_server_op_impl(iface: &syntax::Interface) -> TokenStream {
         }
     });
     quote! {
+        #[automatically_derived]
         impl idol_runtime::ServerOp for #op_enum {
             fn max_reply_size(self) -> usize {
                 match self {
@@ -592,7 +593,6 @@ pub fn generate_server_in_order_trait(
                 },
                 syntax::Reply::Result{ err, .. } => {
                     let err_case = match err {
-
                         // It might be surprising, but to return a complex error
                         // we need to behave very much like the reply code
                         // above: rather than returning `Err`, we need to
@@ -661,6 +661,7 @@ pub fn generate_server_in_order_trait(
     Ok(quote! {
         #trait_def
 
+        #[automatically_derived]
         impl <S: #trt> idol_runtime::Server<#enum_name> for (core::marker::PhantomData<#enum_name>, &'_ mut S) {
             fn recv_source(&self) -> Option<userlib::TaskId> {
                 <S as #trt>::recv_source(self.1)
