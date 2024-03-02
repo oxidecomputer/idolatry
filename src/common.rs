@@ -55,6 +55,7 @@ pub fn generate_op_enum(
         });
         quote! {
             #[derive(counters::Count)]
+            #[allow(non_camel_case_types)]
             pub enum #enum_name #lt {
                 #(#variants),*
             }
