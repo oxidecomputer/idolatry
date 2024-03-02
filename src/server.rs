@@ -654,16 +654,21 @@ fn generate_trait_def(
                         // the error type ensuring it can represent server
                         // death.
                         if !op.idempotent {
-                            error_type_bounds = quote!{
+                            error_type_bounds = quote! {
                                 where #ty: idol_runtime::IHaveConsideredServerDeathWithThisErrorType
                             };
                         }
                         quote! { #ty }
                     }
                     syntax::Error::Complex(ty) => {
-                        error_type_bounds = quote! {
-                            where #ty: From<idol_runtime::ServerDeath>
-                        };
+                        // For non-idempotent operations, generate a bound on
+                        // the error type ensuring it can represent server
+                        // death.
+                        if !op.idempotent {
+                            error_type_bounds = quote! {
+                                where #ty: From<idol_runtime::ServerDeath>
+                            };
+                        }
                         quote! { #ty }
                     }
                     syntax::Error::ServerDeath => {
