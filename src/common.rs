@@ -30,15 +30,6 @@ pub fn generate_op_enum(
             "__{}_OPERATION_COUNTERS",
             iface.name.uppercase()
         );
-        let lt = if iface
-            .ops
-            .values()
-            .any(|op| matches!(&op.reply, syntax::Reply::Result { .. }))
-        {
-            quote! { <'a> }
-        } else {
-            quote! {}
-        };
         let variants = iface.ops.iter().map(|(opname, op)| match &op.reply {
             syntax::Reply::Simple(_) => quote! { #opname },
             syntax::Reply::Result { err, .. } => {
@@ -58,7 +49,7 @@ pub fn generate_op_enum(
         quote! {
             #[derive(counters::Count)]
             #[allow(non_camel_case_types)]
-            pub enum #enum_name #lt {
+            pub enum #enum_name {
                 #(#variants),*
             }
 
