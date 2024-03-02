@@ -81,22 +81,12 @@ impl From<ClientError> for u32 {
     }
 }
 
-// XXX(eliza): apparently the whole thing has to be `cfg`'d, because `cfg_attr`
-// doesn't seem to play nicely with proc-macro attributes. I'm not sure why...
-#[cfg(feature = "counters")]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, counters::Count)]
-#[repr(u32)]
-pub enum RequestError<E> {
-    Runtime(#[count(children)] E),
-    Fail(#[count(children)] ClientError),
-}
-
-#[cfg(not(feature = "counters"))]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
+#[cfg_attr(feature = "counters", derive(counters::Count))]
 pub enum RequestError<E> {
-    Runtime(E),
-    Fail(ClientError),
+    Runtime(#[cfg_attr(feature = "counters", count(children))] E),
+    Fail(#[cfg_attr(feature = "counters", count(children))] ClientError),
 }
 
 impl<E> RequestError<E> {
