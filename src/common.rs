@@ -50,7 +50,13 @@ pub fn generate_op_enum(
                         quote! { idol_runtime::RequestError<core::convert::Infallible> }
                     }
                 };
-                quote! {#opname(#[count(children)] &'a Result<(), #err_ty>) }
+                // hahahaha whew that's really a type
+                quote! {
+                    #opname(#[count(children)] (
+                        &'a Result<(), #err_ty>,
+                        counters::DontCountTheOkVariant)
+                    )
+                }
             }
         });
         quote! {
