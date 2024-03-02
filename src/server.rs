@@ -4,7 +4,7 @@
 
 use super::{
     common::{self, Counters},
-    syntax, GeneratorSettings,
+    syntax, Generator,
 };
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -23,27 +23,7 @@ pub fn build_server_support(
     stub_name: &str,
     style: ServerStyle,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    build_server_support_with_settings(
-        source,
-        stub_name,
-        style,
-        &GeneratorSettings::default(),
-    )
-}
-
-pub fn build_server_support_with_settings(
-    source: &str,
-    stub_name: &str,
-    style: ServerStyle,
-    settings: &GeneratorSettings,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    build_restricted_server_support(
-        source,
-        stub_name,
-        style,
-        &BTreeMap::new(),
-        settings,
-    )
+    Generator::default().build_server_support(source, stub_name, style)
 }
 
 pub fn build_restricted_server_support(
@@ -51,54 +31,375 @@ pub fn build_restricted_server_support(
     stub_name: &str,
     style: ServerStyle,
     allowed_callers: &BTreeMap<String, Vec<usize>>,
-    settings: &GeneratorSettings,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    let mut stub_file = File::create(out.join(stub_name)).unwrap();
-
-    let text = std::fs::read_to_string(source)?;
-    let iface: syntax::Interface = ron::de::from_str(&text)?;
-    let mut tokens = generate_restricted_server_support(
-        &iface,
+    Generator::default().build_restricted_server_support(
+        source,
+        stub_name,
         style,
         allowed_callers,
-        settings,
-    )?;
-
-    tokens.extend(generate_server_section(&iface, &text));
-    let formatted = common::fmt_tokens(tokens)?;
-    write!(stub_file, "{formatted}")?;
-    println!("cargo:rerun-if-changed={}", source);
-    Ok(())
+    )
 }
 
-// `Name` is only mutable as it contains `OnceCell`s, but they don't effect its
-// `Hash`, `PartialEq`, `Eq`, `Ord`, or `PartialOrd` implementations. So, it can
-// safely be used as a map key.
-#[allow(clippy::mutable_key_type)]
-pub fn generate_restricted_server_support(
-    iface: &syntax::Interface,
-    style: ServerStyle,
-    allowed_callers: &BTreeMap<String, Vec<usize>>,
-    settings: &GeneratorSettings,
-) -> Result<TokenStream, Box<dyn std::error::Error + Send + Sync>> {
-    let mut tokens = quote! {
-        #[allow(unused_imports)]
-        use userlib::UnwrapLite;
-    };
+impl Generator {
+    pub fn build_server_support(
+        &self,
+        source: &str,
+        stub_name: &str,
+        style: ServerStyle,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.build_restricted_server_support(
+            source,
+            stub_name,
+            style,
+            &BTreeMap::new(),
+        )
+    }
 
-    tokens.extend(generate_server_constants(iface));
-    tokens.extend(generate_server_conversions(iface));
-    tokens.extend(common::generate_op_enum(iface));
-    tokens.extend(generate_server_op_impl(iface));
+    pub fn build_restricted_server_support(
+        &self,
+        source: &str,
+        stub_name: &str,
+        style: ServerStyle,
+        allowed_callers: &BTreeMap<String, Vec<usize>>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
+        let mut stub_file = File::create(out.join(stub_name)).unwrap();
 
-    tokens.extend(match style {
-        ServerStyle::InOrder => {
-            generate_server_in_order_trait(iface, allowed_callers, settings)?
+        let text = std::fs::read_to_string(source)?;
+        let iface: syntax::Interface = ron::de::from_str(&text)?;
+        let mut tokens = self.generate_restricted_server_support(
+            &iface,
+            style,
+            allowed_callers,
+        )?;
+
+        tokens.extend(generate_server_section(&iface, &text));
+        if self.fmt {
+            let formatted = common::fmt_tokens(tokens)?;
+            write!(stub_file, "{formatted}")?;
+        } else {
+            write!(stub_file, "{tokens}")?;
         }
-    });
 
-    Ok(tokens)
+        println!("cargo:rerun-if-changed={}", source);
+        Ok(())
+    }
+
+    pub fn generate_restricted_server_support(
+        &self,
+        iface: &syntax::Interface,
+        style: ServerStyle,
+        allowed_callers: &BTreeMap<String, Vec<usize>>,
+    ) -> Result<TokenStream, Box<dyn std::error::Error + Send + Sync>> {
+        let mut tokens = quote! {
+            #[allow(unused_imports)]
+            use userlib::UnwrapLite;
+        };
+
+        tokens.extend(generate_server_constants(iface));
+        tokens.extend(generate_server_conversions(iface));
+        tokens.extend(common::generate_op_enum(iface));
+        tokens.extend(generate_server_op_impl(iface));
+
+        tokens.extend(match style {
+            ServerStyle::InOrder => {
+                self.generate_server_in_order_trait(iface, allowed_callers)?
+            }
+        });
+
+        Ok(tokens)
+    }
+
+    pub fn generate_server_in_order_trait(
+        &self,
+        iface: &syntax::Interface,
+        allowed_callers: &BTreeMap<String, Vec<usize>>,
+    ) -> Result<TokenStream, Box<dyn std::error::Error + Send + Sync>> {
+        // Ensure any operations listed in `allowed_callers` actually exist for this
+        // server.
+        for opname in allowed_callers.keys() {
+            if !iface.ops.contains_key(opname.as_str()) {
+                return Err(Box::from(format!(
+                "allowed_callers operation `{}` does not exist for this server",
+                opname
+            )));
+            }
+        }
+
+        let iface_name = &iface.name;
+        let trt = format_ident!("InOrder{iface_name}Impl");
+        let trait_def = generate_trait_def(iface, &trt);
+        let counters = self.counters.then(|| Counters::server(iface));
+
+        let enum_name = iface.name.as_op_enum();
+        let op_cases = iface.ops.iter().map(|(opname, op)| {
+            let check_allowed = if let Some(allowed_callers) = allowed_callers.get(opname.as_str()) {
+                // With our current optimization settings and rustc/llvm version,
+                // the compiler generates better code for raw `if` checks than it
+                // does for the more general `[T;N].contains(&T)`. We'll do a bit of
+                // manual optimization here; if `allowed_callers` is less than 4
+                // (which we expect it to be basically always), we'll generate a
+                // suitable `if`. For longer allowed_callers lists, we'll fall back
+                // to `[T;N].contains(&T)`, which produces a loop.
+                let cond = if allowed_callers.len() < 4 {
+                    quote! {
+                        {
+                            let sender = rm.sender.index();
+                            #( sender != #allowed_callers )&&*
+                        }
+                    }
+                } else {
+                    quote! {
+                        ![#( #allowed_callers ),*].contains(&rm.sender.index())
+                    }
+                };
+                quote! {
+                    // Clippy doesn't like when the block generated by the len < 4
+                    // case is in the if condition, so assign it to a variable.
+                    let disallowed = #cond;
+                    if disallowed {
+                        return Err(idol_runtime::RequestError::Fail(
+                            idol_runtime::ClientError::AccessViolation
+                        ));
+                    }
+                }
+            } else {
+                quote!{}
+            };
+            let read = {
+                let arg_var = if op.args.is_empty() {
+                    quote! { _ }
+                } else {
+                    quote! { args }
+                };
+                let readfn = format_ident!("read_{opname}_msg");
+                quote! {
+                    let #arg_var = #readfn(incoming).ok_or_else(|| {
+                        idol_runtime::ClientError::BadMessageContents.fail()
+                    })?;
+                }
+            };
+            let args = op.args.iter().map(|(argname, arg)| {
+                match &arg.recv {
+                    syntax::RecvStrategy::FromBytes => {
+                        let thingy = if arg.ty.is_bool() {
+                            quote! { #argname() }
+                        } else {
+                            quote! { #argname }
+                        };
+                        quote! {
+                            args.#thingy,
+                        }
+                    },
+                    syntax::RecvStrategy::From(_, None) => {
+                        let name = argname.raw_prefixed();
+                        quote! {
+                            args.#name.into(),
+                        }
+                    }
+                    syntax::RecvStrategy::From(_, Some(f)) => {
+                        let name = argname.raw_prefixed();
+                        quote! {
+                            #f(args.#name),
+                        }
+                    }
+                    syntax::RecvStrategy::FromPrimitive(_) => {
+                        quote! {
+                            args.#argname().ok_or_else(|| {
+                                idol_runtime::ClientError::BadMessageContents.fail()
+                            })?,
+                        }
+                    }
+                }
+            });
+            let leases = op.leases.iter().enumerate().map(|(i, (leasename, lease))| {
+                // This is gross, but, let's spot us some slices :-(
+                let fun = match (lease.read, lease.write) {
+                    (true, false) => "read_only",
+                    (false, true) => "write_only",
+                    (true, true) => "read_write",
+                    _ => unreachable!(),
+                };
+
+                let (fun, limit) = if lease.ty.appears_unsized() {
+                    let max_len = if let Some(n) = lease.max_len {
+                        // It's ok to unwrap the value in server code because we've
+                        // just gotten it _out of_ a NonZeroU32 here, so we know
+                        // it'll be statically valid.
+                        let n = n.get();
+                        quote! {
+                            , Some(core::num::NonZeroU32::new(#n).unwrap_lite())
+                        }
+                    } else {
+                        quote!{ , None }
+                    };
+                    (format_ident!("{fun}_slice"), max_len)
+                } else if lease.max_len.is_some() {
+                    panic!(
+                        "Lease {i} ({leasename}) on operation {iface_name}.{opname} \
+                        has sized type but also max_len field"
+                    );
+                } else {
+                    (format_ident!("{fun}"), quote!{} )
+                };
+                let maybe_unwrap = if lease.max_len.is_some() {
+                    quote! { .try_into().unwrap_lite() }
+                } else {
+                    quote!{}
+                };
+                quote! {
+                    idol_runtime::Leased::#fun(rm.sender, #i #limit)
+                        .ok_or_else(|| idol_runtime::ClientError::BadLease.fail())?#maybe_unwrap,
+                }
+            });
+            let reply = {
+                let encode = match op.encoding {
+                    syntax::Encoding::Zerocopy => quote! {
+                        userlib::sys_reply(rm.sender, 0, zerocopy::AsBytes::as_bytes(&val));
+                    },
+                    syntax::Encoding::Hubpack | syntax::Encoding::Ssmarshal => {
+                        let reply_size = opname.as_reply_size();
+                        let serializer = op.encoding.crate_name();
+                        quote! {
+                            let mut reply_buf = [0u8; #reply_size];
+                            let n_reply = #serializer::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap_lite();
+                            userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);
+                        }
+                    }
+                };
+                match &op.reply {
+                    syntax::Reply::Simple(_) => {
+                        let count = match counters {
+                            Some(ref ctrs) => ctrs.count_simple_op(opname),
+                            None => quote! {},
+                        };
+                        quote! {
+                            match r {
+                                Ok(val) => {
+                                    #encode
+                                    #count
+                                    Ok(())
+                                }
+                                // Simple returns can only return ClientError. The compiler
+                                // can't see this. Jump through some hoops:
+                                Err(val) => Err(val.map_runtime(|e| match e {})),
+                            }
+                        }
+                    },
+                    syntax::Reply::Result{ err, .. } => {
+                        let err_case = match err {
+                            // It might be surprising, but to return a complex error
+                            // we need to behave very much like the reply code
+                            // above: rather than returning `Err`, we need to
+                            // perform an actual `sys_reply` and then return `Ok` to
+                            // avoid triggering the reply handling code in the
+                            // generic dispatch loop.
+                            //
+                            // So, the fact that this error returns `Ok` is not a
+                            // bug.
+                            syntax::Error::Complex (ty) =>  match op.encoding {
+                                syntax::Encoding::Hubpack => quote! {
+                                    match val {
+                                        idol_runtime::RequestError::Fail(f) => {
+                                            // Note: because of the way `into_fault` works,
+                                            // if it returns None, we don't send a reply at
+                                            // all. This is because None indicates that the
+                                            // caller was restarted or otherwise crashed
+                                            if let Some(fault) = f.into_fault() {
+                                                userlib::sys_reply_fault(rm.sender, fault);
+                                            }
+                                        }
+                                        idol_runtime::RequestError::Runtime(e) => {
+                                            let mut reply_buf = [0u8; <#ty as hubpack::SerializedSize>::MAX_SIZE];
+                                            let n_reply = hubpack::serialize(&mut reply_buf, &e).map_err(|_| ()).unwrap_lite();
+                                            userlib::sys_reply(rm.sender, 1, &reply_buf[..n_reply]);
+                                        }
+                                    }
+                                    Ok(())
+                                },
+                                encoding => panic!("Complex error types not supported for {encoding:?} encoding"),
+                            },
+                            syntax::Error::CLike(_) => quote! {
+                                Err(val.map_runtime(u16::from))
+                            },
+                            syntax::Error::ServerDeath => quote! {
+                                Err(val.map_runtime(|e| match e {}))
+                            }
+                        };
+                        let count = match counters {
+                            Some(ref ctrs) => ctrs.count_result(opname, quote! {
+                                match r {
+                                    Ok(_) => Ok(()),
+                                    Err(ref val) => Err(*val),
+                                }
+                            }),
+                            None => quote! {},
+                        };
+                        quote! {
+                            #count
+                            match r {
+                                Ok(val) => {
+                                    #encode
+                                    Ok(())
+                                }
+                                Err(val) => {
+                                    #err_case
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+            quote! {
+                #enum_name::#opname => {
+                    #check_allowed
+                    #read
+                    let r = self.1.#opname(
+                        rm,
+                        #( #args )*
+                        #( #leases )*
+                    );
+                    #reply
+                }
+            }
+        });
+        let counters = counters
+            .as_ref()
+            .map(Counters::generate_defs)
+            .unwrap_or_default();
+
+        Ok(quote! {
+            #trait_def
+
+            #counters
+
+            #[automatically_derived]
+            impl <S: #trt> idol_runtime::Server<#enum_name>
+                for (core::marker::PhantomData<#enum_name>, &'_ mut S)
+            {
+                fn recv_source(&self) -> Option<userlib::TaskId> {
+                    <S as #trt>::recv_source(self.1)
+                }
+
+                fn closed_recv_fail(&mut self) {
+                    <S as #trt>::closed_recv_fail(self.1)
+                }
+
+                fn handle(
+                    &mut self,
+                    op: #enum_name,
+                    incoming: &[u8],
+                    rm: &userlib::RecvMessage,
+                ) -> Result<(), idol_runtime::RequestError<u16>> {
+                    #[allow(unused_imports)]
+                    use core::convert::TryInto;
+                    match op {
+                        #( #op_cases )*
+                    }
+                }
+            }
+        })
+    }
 }
 
 pub fn generate_server_constants(iface: &syntax::Interface) -> TokenStream {
@@ -384,301 +685,6 @@ pub fn generate_server_op_impl(iface: &syntax::Interface) -> TokenStream {
             }
         }
     }
-}
-
-// `Name` is only mutable as it contains `OnceCell`s, but they don't effect its
-// `Hash`, `PartialEq`, `Eq`, `Ord`, or `PartialOrd` implementations. So, it can
-// safely be used as a map key.
-#[allow(clippy::mutable_key_type)]
-pub fn generate_server_in_order_trait(
-    iface: &syntax::Interface,
-    allowed_callers: &BTreeMap<String, Vec<usize>>,
-    settings: &GeneratorSettings,
-) -> Result<TokenStream, Box<dyn std::error::Error + Send + Sync>> {
-    // Ensure any operations listed in `allowed_callers` actually exist for this
-    // server.
-    for opname in allowed_callers.keys() {
-        if !iface.ops.contains_key(opname.as_str()) {
-            return Err(Box::from(format!(
-                "allowed_callers operation `{}` does not exist for this server",
-                opname
-            )));
-        }
-    }
-
-    let iface_name = &iface.name;
-    let trt = format_ident!("InOrder{iface_name}Impl");
-    let trait_def = generate_trait_def(iface, &trt);
-    let counters = settings.counters.then(|| Counters::server(iface));
-
-    let enum_name = iface.name.as_op_enum();
-    let op_cases = iface.ops.iter().map(|(opname, op)| {
-        let check_allowed = if let Some(allowed_callers) = allowed_callers.get(opname.as_str()) {
-            // With our current optimization settings and rustc/llvm version,
-            // the compiler generates better code for raw `if` checks than it
-            // does for the more general `[T;N].contains(&T)`. We'll do a bit of
-            // manual optimization here; if `allowed_callers` is less than 4
-            // (which we expect it to be basically always), we'll generate a
-            // suitable `if`. For longer allowed_callers lists, we'll fall back
-            // to `[T;N].contains(&T)`, which produces a loop.
-            let cond = if allowed_callers.len() < 4 {
-                quote! {
-                    {
-                        let sender = rm.sender.index();
-                        #( sender != #allowed_callers )&&*
-                    }
-                }
-            } else {
-                quote! {
-                    ![#( #allowed_callers ),*].contains(&rm.sender.index())
-                }
-            };
-            quote! {
-                // Clippy doesn't like when the block generated by the len < 4
-                // case is in the if condition, so assign it to a variable.
-                let disallowed = #cond;
-                if disallowed {
-                    return Err(idol_runtime::RequestError::Fail(
-                        idol_runtime::ClientError::AccessViolation
-                    ));
-                }
-            }
-        } else {
-            quote!{}
-        };
-        let read = {
-            let arg_var = if op.args.is_empty() {
-                quote! { _ }
-            } else {
-                quote! { args }
-            };
-            let readfn = format_ident!("read_{opname}_msg");
-            quote! {
-                let #arg_var = #readfn(incoming).ok_or_else(|| {
-                    idol_runtime::ClientError::BadMessageContents.fail()
-                })?;
-            }
-        };
-        let args = op.args.iter().map(|(argname, arg)| {
-            match &arg.recv {
-                syntax::RecvStrategy::FromBytes => {
-                    let thingy = if arg.ty.is_bool() {
-                        quote! { #argname() }
-                    } else {
-                        quote! { #argname }
-                    };
-                    quote! {
-                        args.#thingy,
-                    }
-                },
-                syntax::RecvStrategy::From(_, None) => {
-                    let name = argname.raw_prefixed();
-                    quote! {
-                        args.#name.into(),
-                    }
-                }
-                syntax::RecvStrategy::From(_, Some(f)) => {
-                    let name = argname.raw_prefixed();
-                    quote! {
-                        #f(args.#name),
-                    }
-                }
-                syntax::RecvStrategy::FromPrimitive(_) => {
-                    quote! {
-                        args.#argname().ok_or_else(|| {
-                            idol_runtime::ClientError::BadMessageContents.fail()
-                        })?,
-                    }
-                }
-            }
-        });
-        let leases = op.leases.iter().enumerate().map(|(i, (leasename, lease))| {
-            // This is gross, but, let's spot us some slices :-(
-            let fun = match (lease.read, lease.write) {
-                (true, false) => "read_only",
-                (false, true) => "write_only",
-                (true, true) => "read_write",
-                _ => unreachable!(),
-            };
-
-            let (fun, limit) = if lease.ty.appears_unsized() {
-                let max_len = if let Some(n) = lease.max_len {
-                    // It's ok to unwrap the value in server code because we've
-                    // just gotten it _out of_ a NonZeroU32 here, so we know
-                    // it'll be statically valid.
-                    let n = n.get();
-                    quote! {
-                        , Some(core::num::NonZeroU32::new(#n).unwrap_lite())
-                    }
-                } else {
-                    quote!{ , None }
-                };
-                (format_ident!("{fun}_slice"), max_len)
-            } else if lease.max_len.is_some() {
-                panic!(
-                    "Lease {i} ({leasename}) on operation {iface_name}.{opname} \
-                    has sized type but also max_len field"
-                );
-            } else {
-                (format_ident!("{fun}"), quote!{} )
-            };
-            let maybe_unwrap = if lease.max_len.is_some() {
-                quote! { .try_into().unwrap_lite() }
-            } else {
-                quote!{}
-            };
-            quote! {
-                idol_runtime::Leased::#fun(rm.sender, #i #limit)
-                    .ok_or_else(|| idol_runtime::ClientError::BadLease.fail())?#maybe_unwrap,
-            }
-        });
-        let reply = {
-            let encode = match op.encoding {
-                syntax::Encoding::Zerocopy => quote! {
-                    userlib::sys_reply(rm.sender, 0, zerocopy::AsBytes::as_bytes(&val));
-                },
-                syntax::Encoding::Hubpack | syntax::Encoding::Ssmarshal => {
-                    let reply_size = opname.as_reply_size();
-                    let serializer = op.encoding.crate_name();
-                    quote! {
-                        let mut reply_buf = [0u8; #reply_size];
-                        let n_reply = #serializer::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap_lite();
-                        userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);
-                    }
-                }
-            };
-            match &op.reply {
-                syntax::Reply::Simple(_) => {
-                    let count = match counters {
-                        Some(ref ctrs) => ctrs.count_simple_op(opname),
-                        None => quote! {},
-                    };
-                    quote! {
-                        match r {
-                            Ok(val) => {
-                                #encode
-                                #count
-                                Ok(())
-                            }
-                            // Simple returns can only return ClientError. The compiler
-                            // can't see this. Jump through some hoops:
-                            Err(val) => Err(val.map_runtime(|e| match e {})),
-                        }
-                    }
-                },
-                syntax::Reply::Result{ err, .. } => {
-                    let err_case = match err {
-                        // It might be surprising, but to return a complex error
-                        // we need to behave very much like the reply code
-                        // above: rather than returning `Err`, we need to
-                        // perform an actual `sys_reply` and then return `Ok` to
-                        // avoid triggering the reply handling code in the
-                        // generic dispatch loop.
-                        //
-                        // So, the fact that this error returns `Ok` is not a
-                        // bug.
-                        syntax::Error::Complex (ty) =>  match op.encoding {
-                            syntax::Encoding::Hubpack => quote! {
-                                match val {
-                                    idol_runtime::RequestError::Fail(f) => {
-                                        // Note: because of the way `into_fault` works,
-                                        // if it returns None, we don't send a reply at
-                                        // all. This is because None indicates that the
-                                        // caller was restarted or otherwise crashed
-                                        if let Some(fault) = f.into_fault() {
-                                            userlib::sys_reply_fault(rm.sender, fault);
-                                        }
-                                    }
-                                    idol_runtime::RequestError::Runtime(e) => {
-                                        let mut reply_buf = [0u8; <#ty as hubpack::SerializedSize>::MAX_SIZE];
-                                        let n_reply = hubpack::serialize(&mut reply_buf, &e).map_err(|_| ()).unwrap_lite();
-                                        userlib::sys_reply(rm.sender, 1, &reply_buf[..n_reply]);
-                                    }
-                                }
-                                Ok(())
-                            },
-                            encoding => panic!("Complex error types not supported for {encoding:?} encoding"),
-                        },
-                        syntax::Error::CLike(_) => quote! {
-                            Err(val.map_runtime(u16::from))
-                        },
-                        syntax::Error::ServerDeath => quote! {
-                            Err(val.map_runtime(|e| match e {}))
-                        }
-                    };
-                    let count = match counters {
-                        Some(ref ctrs) => ctrs.count_result(opname, quote! {
-                            match r {
-                                Ok(_) => Ok(()),
-                                Err(ref val) => Err(*val),
-                            }
-                        }),
-                        None => quote! {},
-                    };
-                    quote! {
-                        #count
-                        match r {
-                            Ok(val) => {
-                                #encode
-                                Ok(())
-                            }
-                            Err(val) => {
-                                #err_case
-                            }
-                        }
-                    }
-                }
-            }
-        };
-        quote! {
-            #enum_name::#opname => {
-                #check_allowed
-                #read
-                let r = self.1.#opname(
-                    rm,
-                    #( #args )*
-                    #( #leases )*
-                );
-                #reply
-            }
-        }
-    });
-    let counters = counters
-        .as_ref()
-        .map(Counters::generate_defs)
-        .unwrap_or_default();
-
-    Ok(quote! {
-        #trait_def
-
-        #counters
-
-        #[automatically_derived]
-        impl <S: #trt> idol_runtime::Server<#enum_name>
-            for (core::marker::PhantomData<#enum_name>, &'_ mut S)
-        {
-            fn recv_source(&self) -> Option<userlib::TaskId> {
-                <S as #trt>::recv_source(self.1)
-            }
-
-            fn closed_recv_fail(&mut self) {
-                <S as #trt>::closed_recv_fail(self.1)
-            }
-
-            fn handle(
-                &mut self,
-                op: #enum_name,
-                incoming: &[u8],
-                rm: &userlib::RecvMessage,
-            ) -> Result<(), idol_runtime::RequestError<u16>> {
-                #[allow(unused_imports)]
-                use core::convert::TryInto;
-                match op {
-                    #( #op_cases )*
-                }
-            }
-        }
-    })
 }
 
 fn generate_trait_def(

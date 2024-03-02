@@ -8,20 +8,35 @@ pub(crate) mod serde_helpers;
 pub mod server;
 pub mod syntax;
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[must_use]
-pub struct GeneratorSettings {
+pub struct Generator {
     pub(crate) counters: bool,
+    pub(crate) fmt: bool,
 }
 
-impl GeneratorSettings {
+impl Generator {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            counters: false,
+            fmt: true,
+        }
     }
 
     /// Generate event counters for each IPC operation.
     pub fn with_counters(self, counters: bool) -> Self {
         Self { counters, ..self }
+    }
+
+    /// If `true`, generated code will be formatted with `prettyplease`.
+    pub fn with_fmt(self, counters: bool) -> Self {
+        Self { counters, ..self }
+    }
+}
+
+impl Default for Generator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

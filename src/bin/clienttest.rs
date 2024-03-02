@@ -10,11 +10,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let iface: idol::syntax::Interface = ron::de::from_str(&text)?;
 
-    idol::client::generate_client_stub(
-        &iface,
-        &Default::default(),
-        std::io::stdout(),
-    )?;
+    idol::Generator::new()
+        .with_counters(true)
+        .generate_client_stub(&iface, std::io::stdout())?;
 
     Ok(())
 }
