@@ -2,7 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use super::{common, syntax, GeneratorSettings};
+use super::{
+    common::{self, Counters},
+    syntax, GeneratorSettings,
+};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::BTreeMap;
@@ -86,7 +89,7 @@ pub fn generate_restricted_server_support(
 
     tokens.extend(generate_server_constants(iface));
     tokens.extend(generate_server_conversions(iface));
-    tokens.extend(common::generate_op_enum(iface, settings));
+    tokens.extend(common::generate_op_enum(iface));
     tokens.extend(generate_server_op_impl(iface));
 
     tokens.extend(match style {
@@ -406,12 +409,7 @@ pub fn generate_server_in_order_trait(
     let iface_name = &iface.name;
     let trt = format_ident!("InOrder{iface_name}Impl");
     let trait_def = generate_trait_def(iface, &trt);
-    let counters_name = settings.counters.then(|| {
-        let static_name =
-            format_ident!("__{}_OPERATION_COUNTERS", iface.name.uppercase());
-        let enum_name = format_ident!("{}Event", iface.name);
-        (static_name, enum_name)
-    });
+    let counters = settings.counters.then(|| Counters::server(iface));
 
     let enum_name = iface.name.as_op_enum();
     let op_cases = iface.ops.iter().map(|(opname, op)| {
@@ -551,10 +549,8 @@ pub fn generate_server_in_order_trait(
             };
             match &op.reply {
                 syntax::Reply::Simple(_) => {
-                    let count = match counters_name {
-                        Some((ref counters, ref event_enum)) => quote! {
-                            counters::count!(#counters, #event_enum::#opname);
-                        },
+                    let count = match counters {
+                        Some(ref ctrs) => ctrs.count_simple_op(opname),
                         None => quote! {},
                     };
                     quote! {
@@ -610,13 +606,13 @@ pub fn generate_server_in_order_trait(
                             Err(val.map_runtime(|e| match e {}))
                         }
                     };
-                    let count = match counters_name {
-                        Some((ref counters, ref event_enum)) => quote! {
-                            counters::count!(#counters, #event_enum::#opname(match r {
+                    let count = match counters {
+                        Some(ref ctrs) => ctrs.count_result(opname, quote! {
+                            match r {
                                 Ok(_) => Ok(()),
                                 Err(ref val) => Err(*val),
-                            }));
-                        },
+                            }
+                        }),
                         None => quote! {},
                     };
                     quote! {
@@ -647,9 +643,15 @@ pub fn generate_server_in_order_trait(
             }
         }
     });
+    let counters = counters
+        .as_ref()
+        .map(Counters::generate_defs)
+        .unwrap_or_default();
 
     Ok(quote! {
         #trait_def
+
+        #counters
 
         #[automatically_derived]
         impl <S: #trt> idol_runtime::Server<#enum_name>
@@ -785,5 +787,31 @@ fn generate_server_section(
         #[used]
         #[link_section = ".idolatry"]
         static #name: [u8; #len] = *#byte_str;
+    }
+}
+
+impl Counters {
+    fn server(iface: &syntax::Interface) -> Self {
+        let counters_static = quote::format_ident!(
+            "__{}_SERVER_COUNTERS",
+            iface.name.uppercase()
+        );
+        let variants = iface.ops.iter().map(|(opname, op)| match &op.reply {
+            syntax::Reply::Simple(_) => quote! { #opname },
+            syntax::Reply::Result { err, .. } => {
+                let err_ty = match err {
+                    syntax::Error::CLike(ty) | syntax::Error::Complex(ty) => {
+                        quote! { idol_runtime::RequestError<#ty> }
+                    }
+                    syntax::Error::ServerDeath => {
+                        quote! { idol_runtime::RequestError<core::convert::Infallible> }
+                    }
+                };
+                quote! {
+                    #opname(#[count(children)] Result<(), #err_ty>)
+                }
+            }
+        });
+        Self::new(iface, counters_static, variants)
     }
 }

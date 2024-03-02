@@ -2,7 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use super::{common, syntax, GeneratorSettings};
+use super::{
+    common::{self, Counters},
+    syntax, GeneratorSettings,
+};
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::env;
@@ -36,7 +39,7 @@ pub fn generate_client_stub(
     settings: &GeneratorSettings,
     mut out: impl std::io::Write,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut tokens = common::generate_op_enum(iface, settings);
+    let mut tokens = common::generate_op_enum(iface);
     tokens.extend(client_stub_tokens(iface, settings)?);
     let formatted = common::fmt_tokens(tokens)?;
     write!(out, "{formatted}")?;
@@ -49,6 +52,7 @@ fn client_stub_tokens(
 ) -> Result<TokenStream, Box<dyn std::error::Error + Send + Sync>> {
     let mut ops = Vec::with_capacity(iface.ops.len());
     let iface_name = &iface.name;
+    let counters = settings.counters.then(|| Counters::client(iface));
     for (idx, (name, op)) in iface.ops.iter().enumerate() {
         // Let's do some checks
         if op.idempotent {
@@ -360,6 +364,10 @@ fn client_stub_tokens(
             match &op.reply {
                 syntax::Reply::Simple(t) => {
                     let decode = gen_decode(t);
+                    let count = match counters {
+                        Some(ref ctrs) => ctrs.count_simple_op(name),
+                        None => quote! {},
+                    };
                     let ret = match &t.recv {
                         syntax::RecvStrategy::FromBytes if t.ty.is_bool() => {
                             quote! {return v != 0;}
@@ -379,6 +387,7 @@ fn client_stub_tokens(
                     quote! {
                         if rc != 0 { panic!(); }
                         #decode
+                        #count
                         #ret
                     }
                 }
@@ -415,13 +424,27 @@ fn client_stub_tokens(
                                     }
                                 }
                             };
+                            let count = match counters {
+                                Some(ref ctrs) => {
+                                    ctrs.count_result(name, quote! {Err(err)})
+                                }
+                                None => quote! {},
+                            };
                             quote! {
                                 #check_server_death
-                                return Err(<#ty as core::convert::TryFrom<u32>>::try_from(rc)
-                                    .unwrap_lite());
+                                let err = <#ty as core::convert::TryFrom<u32>>::try_from(rc)
+                                    .unwrap_lite();
+                                #count
+                                return Err(err);
                             }
                         }
                         syntax::Error::Complex(ty) => {
+                            let count = match counters {
+                                Some(ref ctrs) => {
+                                    ctrs.count_result(name, quote! {Err(v)})
+                                }
+                                None => quote! {},
+                            };
                             match op.encoding {
                                 syntax::Encoding::Hubpack => {
                                     let check_server_death = if op.idempotent {
@@ -432,13 +455,16 @@ fn client_stub_tokens(
                                         quote! {
                                             if let Some(g) = userlib::extract_new_generation(rc) {
                                                 self.current_id.set(userlib::TaskId::for_index_and_gen(task.index(), g));
-                                                return Err(#ty::from(idol_runtime::ServerDeath));
+                                                let v = #ty::from(idol_runtime::ServerDeath);
+                                                #count
+                                                return Err(v);
                                             }
                                         }
                                     };
                                     quote! {
                                         #check_server_death
                                         let (v, _): (#ty, _) = hubpack::deserialize(&reply[..len]).unwrap_lite();
+                                        #count
                                         return Err(v);
                                     }
                                 }
@@ -452,9 +478,17 @@ fn client_stub_tokens(
                         }
                         syntax::Error::ServerDeath => {
                             assert!(!op.idempotent, "idempotent operations should not indicate server death");
+                            let count = match counters {
+                                Some(ref counters) => counters.count_result(
+                                    name,
+                                    quote! {Err(idol_runtime::ServerDeath)},
+                                ),
+                                None => quote! {},
+                            };
                             quote! {
                                 if let Some(g) = userlib::extract_new_generation(rc) {
                                     self.current_id.set(userlib::TaskId::for_index_and_gen(task.index(), g));
+                                    #count
                                     return Err(idol_runtime::ServerDeath);
                                 } else {
                                     panic!()
@@ -462,9 +496,16 @@ fn client_stub_tokens(
                             }
                         }
                     };
+                    let count_ok = match counters {
+                        Some(ref counters) => {
+                            counters.count_result(name, quote! {Ok(())})
+                        }
+                        None => quote! {},
+                    };
                     quote! {
                         if rc == 0 {
                             #decode
+                            #count_ok
                             #ret_ok
                         } else {
                             #ret_err
@@ -508,6 +549,11 @@ fn client_stub_tokens(
             }
         })
     }
+    let counters = counters
+        .as_ref()
+        .map(Counters::generate_defs)
+        .unwrap_or_default();
+
     Ok(quote! {
         #[allow(unused_imports)]
         use userlib::UnwrapLite;
@@ -524,6 +570,8 @@ fn client_stub_tokens(
             }
         }
 
+        #counters
+
         #[allow(clippy::let_unit_value,
                 clippy::collapsible_else_if,
                 clippy::needless_return,
@@ -538,4 +586,30 @@ fn client_stub_tokens(
             #(#ops)*
         }
     })
+}
+
+impl Counters {
+    fn client(iface: &syntax::Interface) -> Self {
+        let counters_static = quote::format_ident!(
+            "__{}_CLIENT_COUNTERS",
+            iface.name.uppercase()
+        );
+        let variants = iface.ops.iter().map(|(opname, op)| match &op.reply {
+            syntax::Reply::Simple(_) => quote! { #opname },
+            syntax::Reply::Result { err, .. } => {
+                let err_ty = match err {
+                    syntax::Error::CLike(ty) | syntax::Error::Complex(ty) => {
+                        quote! { #ty }
+                    }
+                    syntax::Error::ServerDeath => {
+                        quote! { idol_runtime::ServerDeath }
+                    }
+                };
+                quote! {
+                    #opname(#[count(children)] Result<(), #err_ty>)
+                }
+            }
+        });
+        Self::new(iface, counters_static, variants)
+    }
 }
