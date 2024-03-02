@@ -612,7 +612,10 @@ pub fn generate_server_in_order_trait(
                     };
                     let count = match counters_name {
                         Some((ref counters, ref event_enum)) => quote! {
-                            counters::count!(#counters, #event_enum::#opname(&r));
+                            counters::count!(#counters, #event_enum::#opname(match r {
+                                Ok(_) => Ok(()),
+                                Err(ref val) => Err(*val),
+                            }));
                         },
                         None => quote! {},
                     };
