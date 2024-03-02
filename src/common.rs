@@ -44,10 +44,10 @@ pub fn generate_op_enum(
             syntax::Reply::Result { err, .. } => {
                 let err_ty = match err {
                     syntax::Error::CLike(ty) | syntax::Error::Complex(ty) => {
-                        quote! { #ty }
+                        quote! { idol_runtime::RequestError<#ty> }
                     }
                     syntax::Error::ServerDeath => {
-                        quote! { idol_runtime::ServerDeath }
+                        quote! { idol_runtime::RequestError<core::convert::Infallible> }
                     }
                 };
                 quote! {#opname(#[count(children)] &'a Result<(), #err_ty>) }
