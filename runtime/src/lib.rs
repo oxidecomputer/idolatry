@@ -48,6 +48,19 @@ pub trait IHaveConsideredServerDeathWithThisErrorType {}
 /// client.
 pub struct ServerDeath;
 
+#[cfg(feature = "counters")]
+impl counters::Count for ServerDeath {
+    type Counters = core::sync::atomic::AtomicU32;
+    const NEW_COUNTERS: Self::Counters = core::sync::atomic::AtomicU32::new(0);
+    fn count(&self, count: &Self::Counters) {
+        counters::armv6m_atomic_hack::AtomicU32Ext::fetch_add(
+            count,
+            1,
+            core::sync::atomic::Ordering::Relaxed,
+        );
+    }
+}
+
 impl ClientError {
     pub fn into_fault(self) -> Option<ReplyFaultReason> {
         match self {
