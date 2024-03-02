@@ -409,7 +409,7 @@ pub fn generate_server_in_order_trait(
     let counters_name = settings.counters.then(|| {
         let static_name =
             format_ident!("__{}_OPERATION_COUNTERS", iface.name.uppercase());
-        let enum_name = format_ident!("{}Event", iface.name.uppercase());
+        let enum_name = format_ident!("{}Event", iface.name);
         (static_name, enum_name)
     });
 
