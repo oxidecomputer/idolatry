@@ -11,7 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let iface: idol::syntax::Interface = ron::de::from_str(&text)?;
 
     idol::Generator::new()
-        .with_counters(true)
+        .with_counters(idol::CounterSettings::default())
         .generate_client_stub(&iface, std::io::stdout())?;
 
     Ok(())

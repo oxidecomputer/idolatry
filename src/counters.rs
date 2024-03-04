@@ -167,7 +167,7 @@ impl Counters {
                     match r {
                         Ok(_) => #event_enum::#op(Ok(())),
                         Err(idol_runtime::RequestError::ClientError(ref e)) => #event_enum::ClientError(*e),
-                        Err(ref val) => #event_enum::#op(Err(val)),
+                        Err(ref val) => #event_enum::#op(Err(*val)),
                 });
             }
         } else if server {
@@ -175,7 +175,7 @@ impl Counters {
                 counters::count!(#counters_static,
                     #event_enum::#op(match r {
                         Ok(_) => Ok(()),
-                        Err(ref e) => Err(e),
+                        Err(ref e) => Err(*e),
                     })
                 );
             }

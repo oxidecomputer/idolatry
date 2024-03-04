@@ -6,7 +6,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let iface: idol::syntax::Interface = ron::de::from_str(&text)?;
     let tokens = idol::Generator::new()
-        .with_counters(true)
+        .with_counters(
+            idol::CounterSettings::default().combine_client_errors(true),
+        )
         .generate_restricted_server_support(
             &iface,
             idol::server::ServerStyle::InOrder,
