@@ -12,7 +12,6 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             idol::server::ServerStyle::InOrder,
             &Default::default(),
         )?;
-    // println!("{tokens}");
     let syntax_tree = syn::parse2::<syn::File>(tokens)?;
     let formatted = prettyplease::unparse(&syntax_tree);
     println!("{formatted}");

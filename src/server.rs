@@ -2,10 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use super::{
-    common::{self, Counters},
-    syntax, Generator,
-};
+use super::{common, syntax, Generator};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::BTreeMap;
@@ -129,7 +126,7 @@ impl Generator {
         let iface_name = &iface.name;
         let trt = format_ident!("InOrder{iface_name}Impl");
         let trait_def = generate_trait_def(iface, &trt);
-        let counters = self.counters.then(|| Counters::server(iface));
+        let counters = self.counters.clone().map(|ctrs| ctrs.server(iface));
 
         let enum_name = iface.name.as_op_enum();
         let op_cases = iface.ops.iter().map(|(opname, op)| {
@@ -327,12 +324,7 @@ impl Generator {
                             }
                         };
                         let count = match counters {
-                            Some(ref ctrs) => ctrs.count_result(opname, quote! {
-                                match r {
-                                    Ok(_) => Ok(()),
-                                    Err(ref val) => Err(*val),
-                                }
-                            }),
+                            Some(ref ctrs) => ctrs.count_result(opname, quote! { r }),
                             None => quote! {},
                         };
                         quote! {
@@ -365,7 +357,7 @@ impl Generator {
         });
         let counters = counters
             .as_ref()
-            .map(Counters::generate_defs)
+            .map(|ctrs| ctrs.generate_defs())
             .unwrap_or_default();
 
         Ok(quote! {
@@ -793,31 +785,5 @@ fn generate_server_section(
         #[used]
         #[link_section = ".idolatry"]
         static #name: [u8; #len] = *#byte_str;
-    }
-}
-
-impl Counters {
-    fn server(iface: &syntax::Interface) -> Self {
-        let counters_static = quote::format_ident!(
-            "__{}_SERVER_COUNTERS",
-            iface.name.uppercase()
-        );
-        let variants = iface.ops.iter().map(|(opname, op)| match &op.reply {
-            syntax::Reply::Simple(_) => quote! { #opname },
-            syntax::Reply::Result { err, .. } => {
-                let err_ty = match err {
-                    syntax::Error::CLike(ty) | syntax::Error::Complex(ty) => {
-                        quote! { idol_runtime::RequestError<#ty> }
-                    }
-                    syntax::Error::ServerDeath => {
-                        quote! { idol_runtime::RequestError<core::convert::Infallible> }
-                    }
-                };
-                quote! {
-                    #opname(#[count(children)] Result<(), #err_ty>)
-                }
-            }
-        });
-        Self::new(iface, counters_static, variants)
     }
 }

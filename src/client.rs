@@ -2,10 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use super::{
-    common::{self, Counters},
-    syntax, Generator,
-};
+use super::{common, syntax, Generator};
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::env;
@@ -74,7 +71,7 @@ impl Generator {
     ) -> Result<TokenStream, Box<dyn std::error::Error + Send + Sync>> {
         let mut ops = Vec::with_capacity(iface.ops.len());
         let iface_name = &iface.name;
-        let counters = self.counters.then(|| Counters::client(iface));
+        let counters = self.counters.clone().map(|ctrs| ctrs.client(iface));
         for (idx, (name, op)) in iface.ops.iter().enumerate() {
             // Let's do some checks
             if op.idempotent {
@@ -587,7 +584,7 @@ impl Generator {
         }
         let counters = counters
             .as_ref()
-            .map(Counters::generate_defs)
+            .map(|ctrs| ctrs.generate_defs())
             .unwrap_or_default();
 
         Ok(quote! {
@@ -622,30 +619,5 @@ impl Generator {
                 #(#ops)*
             }
         })
-    }
-}
-impl Counters {
-    fn client(iface: &syntax::Interface) -> Self {
-        let counters_static = quote::format_ident!(
-            "__{}_CLIENT_COUNTERS",
-            iface.name.uppercase()
-        );
-        let variants = iface.ops.iter().map(|(opname, op)| match &op.reply {
-            syntax::Reply::Simple(_) => quote! { #opname },
-            syntax::Reply::Result { err, .. } => {
-                let err_ty = match err {
-                    syntax::Error::CLike(ty) | syntax::Error::Complex(ty) => {
-                        quote! { #ty }
-                    }
-                    syntax::Error::ServerDeath => {
-                        quote! { idol_runtime::ServerDeath }
-                    }
-                };
-                quote! {
-                    #opname(#[count(children)] Result<(), #err_ty>)
-                }
-            }
-        });
-        Self::new(iface, counters_static, variants)
     }
 }
