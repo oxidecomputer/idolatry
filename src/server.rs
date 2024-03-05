@@ -407,7 +407,7 @@ pub fn generate_server_in_order_trait(
                 // case is in the if condition, so assign it to a variable.
                 let disallowed = #cond;
                 if disallowed {
-                    return Err(RequestError::Fail(ClientError::AccessViolation));
+                    return Err(idol_runtime::RequestError::Fail(idol_runtime::ClientError::AccessViolation));
                 }
             }
         } else {
@@ -421,7 +421,7 @@ pub fn generate_server_in_order_trait(
             };
             let readfn = format_ident!("read_{opname}_msg");
             quote! {
-                let #arg_var = #readfn(incoming).ok_or_else(|| ClientError::BadMessageContents.fail())?;
+                let #arg_var = #readfn(incoming).ok_or_else(|| idol_runtime::ClientError::BadMessageContents.fail())?;
             }
         };
         let args = op.args.iter().map(|(argname, arg)| {
@@ -450,7 +450,7 @@ pub fn generate_server_in_order_trait(
                 }
                 syntax::RecvStrategy::FromPrimitive(_) => {
                     quote! {
-                        args.#argname().ok_or_else(|| ClientError::BadMessageContents.fail())?,
+                        args.#argname().ok_or_else(|| idol_runtime::ClientError::BadMessageContents.fail())?,
                     }
                 }
             }
@@ -535,7 +535,7 @@ pub fn generate_server_in_order_trait(
                         syntax::Error::Complex (ty) =>  match op.encoding {
                             syntax::Encoding::Hubpack => quote! {
                                 match val {
-                                    RequestError::Fail(f) => {
+                                    idol_runtime::RequestError::Fail(f) => {
                                         // Note: because of the way `into_fault` works,
                                         // if it returns None, we don't send a reply at
                                         // all. This is because None indicates that the
@@ -544,7 +544,7 @@ pub fn generate_server_in_order_trait(
                                                 userlib::sys_reply_fault(rm.sender, fault);
                                         }
                                     }
-                                    RequestError::Runtime(e) => {
+                                    idol_runtime::RequestError::Runtime(e) => {
                                         let mut reply_buf = [0u8; <#ty as hubpack::SerializedSize>::MAX_SIZE];
                                         let n_reply = hubpack::serialize(&mut reply_buf, &e).map_err(|_| ()).unwrap_lite();
                                         userlib::sys_reply(rm.sender, 1, &reply_buf[..n_reply]);
@@ -605,11 +605,11 @@ pub fn generate_server_in_order_trait(
                 op: #enum_name,
                 incoming: &[u8],
                 rm: &userlib::RecvMessage,
-            ) -> Result<(), RequestError<u16>> {
+            ) -> Result<(), idol_runtime::RequestError<u16>> {
                 #[allow(unused_imports)]
                 use core::convert::TryInto;
                 #[allow(unused_imports)]
-                use idol_runtime::{ClientError, RequestError};
+                use idol_runtime::ClientError;
                 match op {
                     #( #op_cases )*
                 }
@@ -678,10 +678,10 @@ fn generate_trait_def(
                         quote! { core::convert::Infallible }
                     }
                 };
-                quote! { Result<#ok, RequestError<#err_ty>> }
+                quote! { Result<#ok, idol_runtime::RequestError<#err_ty>> }
             },
             syntax::Reply::Simple(t) => {
-                quote! { Result<#t, RequestError<core::convert::Infallible>> }
+                quote! { Result<#t, idol_runtime::RequestError<core::convert::Infallible>> }
             },
         };
         quote! {
