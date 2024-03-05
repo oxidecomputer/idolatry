@@ -11,6 +11,11 @@ serde = { version = "1.0", default-features = false }
 toml = { version = "0.7", default-features = false }
 indexmap = {version = "1.7", default-features = false, features = ["serde-1"]}
 quote = { version = "1.0", default-features = false }
+proc-macro2 = { version = "1.0.74" }
+syn = { version = "2.0.52", features = ["full", "parsing", "extra-traits"] }
+serde_with = { version = "3.3.0", features = ["macros"] }
+prettyplease = "0.2.16"
+once_cell = "1.0.0"
 
 [workspace]
 members = ["runtime"]

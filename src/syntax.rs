@@ -8,15 +8,162 @@
 //! parser, but then, McCarthy said the same thing about s-expressions.
 
 use indexmap::IndexMap;
+use once_cell::unsync::OnceCell;
+use quote::TokenStreamExt;
 use serde::{Deserialize, Serialize};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::num::NonZeroU32;
+
+/// An identifier.
+#[derive(Debug, SerializeDisplay, DeserializeFromStr)]
+pub struct Name {
+    pub ident: syn::Ident,
+    /// Necessary to stop syn from rendering the underlying string repr
+    /// inaccessible, used for map lookups.
+    as_string: String,
+    // A bunch of code generation uses input identifiers to construct other
+    // identifiers, such as prefixing or uppercasing, multiple times for the
+    // same identifier. Thus, we cache these to reduce the number of
+    // strings we allocate a bunch of times during codegen.
+    //
+    // This is, admittedly, a kind of goofy microoptimization that probably
+    // doesn't matter that much.
+    /// Cached uppercase version of the identifier, used for generating constants.
+    uppercase: String,
+    /// Cached version of the identifier with a `arg_` prefix, used for
+    /// generating argument names in generated code.
+    arg_name: OnceCell<syn::Ident>,
+    /// Cached version of the identifier as a `{uppercase}_REPLY_SIZE` constant.
+    reply_size: OnceCell<syn::Ident>,
+    /// Cached version of the identifier with a `raw_` prefix, used for
+    /// generating arguments which perform conversions.
+    raw_argname: OnceCell<syn::Ident>,
+    /// Cached version of the identifier as `{name}Operation`.
+    op_enum: OnceCell<syn::Ident>,
+}
+
+impl std::fmt::Display for Name {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.ident.fmt(f)
+    }
+}
+
+impl std::str::FromStr for Name {
+    type Err = syn::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let ident = syn::parse_str(s)?;
+        let uppercase = s.to_uppercase();
+        Ok(Self {
+            as_string: s.to_string(),
+            ident,
+            arg_name: OnceCell::new(),
+            reply_size: OnceCell::new(),
+            raw_argname: OnceCell::new(),
+            op_enum: OnceCell::new(),
+            uppercase,
+        })
+    }
+}
+
+impl quote::ToTokens for Name {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        self.ident.to_tokens(tokens)
+    }
+}
+
+impl quote::IdentFragment for Name {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        quote::IdentFragment::fmt(&self.ident, f)
+    }
+
+    fn span(&self) -> Option<proc_macro2::Span> {
+        quote::IdentFragment::span(&self.ident)
+    }
+}
+
+impl PartialEq for Name {
+    fn eq(&self, other: &Self) -> bool {
+        self.ident == other.ident
+    }
+}
+
+impl Eq for Name {}
+
+impl Ord for Name {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.ident.cmp(&other.ident)
+    }
+}
+
+impl PartialOrd for Name {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl std::hash::Hash for Name {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.ident.hash(state);
+    }
+}
+
+impl Clone for Name {
+    fn clone(&self) -> Self {
+        Self {
+            as_string: self.as_string.clone(),
+            ident: self.ident.clone(),
+            uppercase: self.uppercase.clone(),
+            arg_name: OnceCell::new(),
+            reply_size: OnceCell::new(),
+            raw_argname: OnceCell::new(),
+            op_enum: OnceCell::new(),
+        }
+    }
+}
+
+impl Name {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.as_string
+    }
+
+    pub(crate) fn uppercase(&self) -> &str {
+        &self.uppercase
+    }
+
+    pub(crate) fn arg_prefixed(&self) -> &syn::Ident {
+        self.arg_name
+            .get_or_init(|| quote::format_ident!("arg_{}", self))
+    }
+
+    pub(crate) fn as_reply_size(&self) -> &syn::Ident {
+        self.reply_size.get_or_init(|| {
+            quote::format_ident!("{}_REPLY_SIZE", self.uppercase)
+        })
+    }
+
+    pub(crate) fn raw_prefixed(&self) -> &syn::Ident {
+        self.raw_argname
+            .get_or_init(|| quote::format_ident!("raw_{self}"))
+    }
+
+    pub(crate) fn as_op_enum(&self) -> &syn::Ident {
+        self.op_enum
+            .get_or_init(|| quote::format_ident!("{self}Operation"))
+    }
+}
+
+impl std::borrow::Borrow<str> for Name {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
 
 /// Definition of an IPC interface.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Interface {
     /// Name of interface. This will be used in generated types, and should
     /// match Rust type name conventions.
-    pub name: String,
+    pub name: Name,
     /// Operations supported by the interface. The names of the operations
     /// should be Rust identifiers, and will be used in generated function
     /// names.
@@ -26,7 +173,7 @@ pub struct Interface {
     #[serde(
         deserialize_with = "crate::serde_helpers::deserialize_reject_dup_keys"
     )]
-    pub ops: IndexMap<String, Operation>,
+    pub ops: IndexMap<Name, Operation>,
 }
 
 impl std::str::FromStr for Interface {
@@ -59,7 +206,7 @@ pub struct Operation {
         default,
         deserialize_with = "crate::serde_helpers::deserialize_reject_dup_keys"
     )]
-    pub args: IndexMap<String, AttributedTy>,
+    pub args: IndexMap<Name, AttributedTy>,
     /// Arguments of the operation that are converted into leases. If omitted,
     /// zero leases are assumed.
     ///
@@ -69,7 +216,7 @@ pub struct Operation {
         default,
         deserialize_with = "crate::serde_helpers::deserialize_reject_dup_keys"
     )]
-    pub leases: IndexMap<String, Lease>,
+    pub leases: IndexMap<Name, Lease>,
     /// Expected type of the response.
     pub reply: Reply,
 
@@ -102,6 +249,22 @@ pub enum Encoding {
 impl Default for Encoding {
     fn default() -> Self {
         Self::Zerocopy
+    }
+}
+
+impl Encoding {
+    pub fn crate_name(&self) -> syn::Ident {
+        match self {
+            Self::Zerocopy => {
+                syn::Ident::new("zerocopy", proc_macro2::Span::call_site())
+            }
+            Self::Ssmarshal => {
+                syn::Ident::new("ssmarshal", proc_macro2::Span::call_site())
+            }
+            Self::Hubpack => {
+                syn::Ident::new("hubpack", proc_macro2::Span::call_site())
+            }
+        }
     }
 }
 
@@ -151,6 +314,21 @@ pub enum Reply {
     },
 }
 
+impl quote::ToTokens for Reply {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        match self {
+            Self::Simple(AttributedTy { ty, .. }) => ty.to_tokens(tokens),
+            Self::Result {
+                ok: AttributedTy { ty: ok, .. },
+                err,
+            } => quote::quote! {
+                Result<#ok, #err>
+            }
+            .to_tokens(tokens),
+        }
+    }
+}
+
 /// A type that can also have common attributes applied.
 ///
 /// `AttributedTy` appears in both argument and reply type positions in the
@@ -174,19 +352,17 @@ pub struct AttributedTy {
 }
 
 impl AttributedTy {
-    pub fn display(&self) -> &impl std::fmt::Display {
-        &self.ty.0
-    }
-
     /// Returns the Rust type that should be used to represent this in the
     /// internal args/reply structs.
-    pub fn repr_ty(&self) -> &str {
+    pub fn repr_ty(&self) -> syn::Type {
         match &self.recv {
-            RecvStrategy::From(t, _) | RecvStrategy::FromPrimitive(t) => &t.0,
-            RecvStrategy::FromBytes => match self.ty.0.as_str() {
-                "bool" => "u8",
-                ty => ty,
-            },
+            RecvStrategy::From(t, _) | RecvStrategy::FromPrimitive(t) => {
+                t.0.clone()
+            }
+            RecvStrategy::FromBytes if self.ty.is_bool() => {
+                syn::parse_quote! { u8 }
+            }
+            RecvStrategy::FromBytes => self.ty.0.clone(),
         }
     }
 }
@@ -244,8 +420,9 @@ impl<'de> serde::de::Visitor<'de> for AttributedTyVisitor {
     where
         E: serde::de::Error,
     {
+        let ty = v.parse::<Ty>().map_err(E::custom)?;
         Ok(AttributedTy {
-            ty: Ty(v.to_string()),
+            ty,
             recv: RecvStrategy::default(),
         })
     }
@@ -260,24 +437,60 @@ impl<'de> Deserialize<'de> for AttributedTy {
     }
 }
 
+impl quote::ToTokens for AttributedTy {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        self.ty.to_tokens(tokens)
+    }
+}
+
 /// A type name.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct Ty(pub String);
+#[derive(
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
+pub struct Ty(pub syn::Type);
 
 impl Ty {
     /// Checks whether the type name looks like it might be unsized.
     ///
     /// We use this to choose lease validation strategies.
     pub fn appears_unsized(&self) -> bool {
-        // This is a hack. Need to work out a better way to determine this.
-        self.0.starts_with('[') && self.0.ends_with(']')
+        matches!(self.0, syn::Type::Slice(_) | syn::Type::TraitObject(_))
+    }
+
+    /// Returns `true` if this is a bool.
+    pub fn is_bool(&self) -> bool {
+        thread_local! {
+            static BOOL_TY: std::cell::RefCell<Option<syn::Type>> = const { std::cell::RefCell::new(None) };
+        }
+        BOOL_TY.with(|ty| {
+            let mut ty = ty.borrow_mut();
+            let ty = ty.get_or_insert_with(|| syn::parse_quote! { bool });
+            self.0 == *ty
+        })
     }
 }
 
 impl std::fmt::Display for Ty {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        self.0.fmt(f)
+        quote::quote! { #self }.fmt(f)
+    }
+}
+
+impl std::str::FromStr for Ty {
+    type Err = syn::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        syn::parse_str(s).map(Self)
+    }
+}
+
+impl quote::ToTokens for Ty {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        self.0.to_tokens(tokens)
     }
 }
 
@@ -306,6 +519,20 @@ pub enum Error {
     ServerDeath,
 }
 
+impl quote::ToTokens for Error {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        match self {
+            Self::CLike(ty) | Self::Complex(ty) => ty.to_tokens(tokens),
+            Self::ServerDeath => {
+                tokens.append(proc_macro2::Ident::new(
+                    "idol_runtime::ServerDeath",
+                    proc_macro2::Span::call_site(),
+                ));
+            }
+        }
+    }
+}
+
 /// Enumerates different ways that a type might be unpacked when received over
 /// an IPC interface from another task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -324,7 +551,7 @@ pub enum RecvStrategy {
     ///
     /// If the second field is `Some(fn_name)`, it specifies conversion by
     /// `fn_name`.
-    From(Ty, #[serde(default)] Option<String>),
+    From(Ty, #[serde(default)] Option<Name>),
 }
 
 impl Default for RecvStrategy {

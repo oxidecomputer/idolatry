@@ -3,6 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use super::{common, syntax};
+use proc_macro2::TokenStream;
+use quote::{format_ident, quote};
 use std::collections::BTreeMap;
 use std::env;
 use std::fs::File;
@@ -32,339 +34,341 @@ pub fn build_restricted_server_support(
 
     let text = std::fs::read_to_string(source)?;
     let iface: syntax::Interface = ron::de::from_str(&text)?;
+    let mut tokens =
+        generate_restricted_server_support(&iface, style, allowed_callers)?;
 
-    writeln!(stub_file, "#[allow(unused_imports)]")?;
-    writeln!(stub_file, "use userlib::UnwrapLite;")?;
-
-    generate_server_constants(&iface, &mut stub_file)?;
-    generate_server_conversions(&iface, &mut stub_file)?;
-    common::generate_op_enum(&iface, &mut stub_file)?;
-    generate_server_op_impl(&iface, &mut stub_file)?;
-
-    match style {
-        ServerStyle::InOrder => {
-            generate_server_in_order_trait(
-                &iface,
-                &mut stub_file,
-                allowed_callers,
-            )?;
-        }
-    }
-
-    generate_server_section(&iface, &text, &mut stub_file)?;
+    tokens.extend(generate_server_section(&iface, &text));
+    let formatted = common::fmt_tokens(tokens)?;
+    write!(stub_file, "{formatted}")?;
     println!("cargo:rerun-if-changed={}", source);
     Ok(())
 }
 
-pub fn generate_server_constants(
+// `Name` is only mutable as it contains `OnceCell`s, but they don't effect its
+// `Hash`, `PartialEq`, `Eq`, `Ord`, or `PartialOrd` implementations. So, it can
+// safely be used as a map key.
+#[allow(clippy::mutable_key_type)]
+pub fn generate_restricted_server_support(
     iface: &syntax::Interface,
-    mut out: impl Write,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Generate message sizing constants for each message.
-    let mut upper_names = vec![];
-    for (name, op) in &iface.ops {
-        let upper_name = name.to_uppercase();
+    style: ServerStyle,
+    allowed_callers: &BTreeMap<String, Vec<usize>>,
+) -> Result<TokenStream, Box<dyn std::error::Error + Send + Sync>> {
+    let mut tokens = quote! {
+        #[allow(unused_imports)]
+        use userlib::UnwrapLite;
+    };
 
-        write!(out, "pub const {}_MSG_SIZE: usize = ", upper_name)?;
-        match op.encoding {
-            // Zerocopy moves fields as a packed struct, so the sum of input
-            // type sizes is sufficient to fit the message.
-            syntax::Encoding::Zerocopy => {
-                writeln!(out, "0")?;
-                for arg in op.args.values() {
-                    writeln!(
-                        out,
-                        "    + core::mem::size_of::<{}>()",
-                        arg.ty.0
-                    )?;
-                }
-                writeln!(out, "    ;")?;
-            }
+    tokens.extend(generate_server_constants(iface));
+    tokens.extend(generate_server_conversions(iface));
+    tokens.extend(common::generate_op_enum(iface));
+    tokens.extend(generate_server_op_impl(iface));
 
-            // ssmarshal guarantees that the serialized size will be no longer
-            // than the size of the input struct. Note that this may be larger
-            // than the sum of struct members!
-            syntax::Encoding::Ssmarshal => {
-                writeln!(
-                    out,
-                    "\n    core::mem::size_of::<{}_{}_ARGS>();",
-                    iface.name, name
-                )?;
-            }
-
-            // hubpack's SerializedSize traits defines a `MAX_SIZE` associated
-            // constant
-            syntax::Encoding::Hubpack => {
-                writeln!(
-                    out,
-                    "\n    <{}_{}_ARGS as hubpack::SerializedSize>::MAX_SIZE;",
-                    iface.name, name
-                )?;
-            }
+    tokens.extend(match style {
+        ServerStyle::InOrder => {
+            generate_server_in_order_trait(iface, allowed_callers)?
         }
+    });
 
-        write!(out, "pub const {}_REPLY_SIZE: usize =", upper_name)?;
-        match &op.reply {
-            syntax::Reply::Result { ok, .. } => {
-                // This strategy only uses bytes for the OK side of the type,
-                // and only sends one type, so:
-                match op.encoding {
-                    syntax::Encoding::Zerocopy
-                    | syntax::Encoding::Ssmarshal => {
-                        writeln!(
-                            out,
-                            "core::mem::size_of::<{}>();",
-                            ok.display()
-                        )?;
-                    }
-                    syntax::Encoding::Hubpack => {
-                        writeln!(
-                            out,
-                            "<{} as hubpack::SerializedSize>::MAX_SIZE;",
-                            ok.display()
-                        )?;
-                    }
-                }
-            }
-            syntax::Reply::Simple(t) => match op.encoding {
-                syntax::Encoding::Zerocopy | syntax::Encoding::Ssmarshal => {
-                    writeln!(out, "core::mem::size_of::<{}>();", t.display())?;
-                }
-                syntax::Encoding::Hubpack => {
-                    writeln!(
-                        out,
-                        "<{} as hubpack::SerializedSize>::MAX_SIZE;",
-                        t.display()
-                    )?;
-                }
-            },
-        }
-
-        upper_names.push(upper_name);
-    }
-
-    // `max_incoming_size` may compare `max < 0`, which we want to ignore
-    writeln!(out, "#[allow(clippy::absurd_extreme_comparisons)]")?;
-    writeln!(out, "const fn max_incoming_size() -> usize {{")?;
-    writeln!(out, "    let mut max = 0;")?;
-    for un in upper_names {
-        writeln!(out, "    if max < {}_MSG_SIZE {{", un)?;
-        writeln!(out, "        max = {}_MSG_SIZE;", un)?;
-        writeln!(out, "    }}")?;
-    }
-    writeln!(out, "    max")?;
-    writeln!(out, "}}")?;
-    writeln!(out, "pub const INCOMING_SIZE: usize = max_incoming_size();")?;
-    Ok(())
+    Ok(tokens)
 }
 
-pub fn generate_server_conversions(
-    iface: &syntax::Interface,
-    mut out: impl Write,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    for (name, op) in &iface.ops {
-        // Define args struct.
-        writeln!(out, "#[allow(non_camel_case_types)]")?;
-        match op.encoding {
-            syntax::Encoding::Zerocopy => {
-                writeln!(out, "#[repr(C, packed)]")?;
-                writeln!(
-                    out,
-                    "#[derive(Copy, Clone, zerocopy::FromBytes, zerocopy::Unaligned)]"
-                )?;
-            }
-            syntax::Encoding::Ssmarshal => {
-                writeln!(out, "#[derive(Copy, Clone, serde::Deserialize)]")?;
-            }
-            syntax::Encoding::Hubpack => {
-                writeln!(out, "#[derive(Copy, Clone, serde::Deserialize, hubpack::SerializedSize)]")?;
-            }
-        }
-        if !matches!(op.encoding, syntax::Encoding::Zerocopy) {
-            // The recv strategy thing only really makes sense for the Zerocopy
-            // encoding. In particular, generated clients for the other encoding
-            // won't use it.
-            for (argname, arg) in &op.args {
-                if !matches!(arg.recv, syntax::RecvStrategy::FromBytes) {
-                    panic!("operation {name} argument {argname} uses a recv strategy, \
-                        but this won't work with Ssmarshal/Hubpack encoding (remove it)");
+pub fn generate_server_constants(iface: &syntax::Interface) -> TokenStream {
+    // Generate message sizing constants for each message.
+    let mut msgsize_names = Vec::with_capacity(iface.ops.len());
+    let consts = iface.ops.iter().map(|(name, op)| {
+        let msg_size = {
+            let const_name = format_ident!("{}_MSG_SIZE", name.uppercase());
+            let val = match op.encoding {
+                // Zerocopy moves fields as a packed struct, so the sum of input
+                // type sizes is sufficient to fit the message.
+                syntax::Encoding::Zerocopy => {
+                    let vals = op.args.values().map(|arg| {
+                        quote! {
+                            + core::mem::size_of::<#arg>()
+                        }
+                    });
+                    quote! { 0 #( #vals )* }
                 }
-            }
-        }
-        writeln!(out, "pub struct {}_{}_ARGS {{", iface.name, name)?;
-        let mut need_args_impl = false;
-        for (argname, arg) in &op.args {
-            match &arg.recv {
-                syntax::RecvStrategy::FromBytes => {
-                    // Special-case handling to send bools using a Zerocopy
-                    // encoding strategy, for efficiency.
-                    if arg.ty.0 == "bool" {
-                        writeln!(out, "    pub raw_{}: u8,", argname)?;
-                        need_args_impl = true;
-                    } else {
-                        writeln!(out, "    pub {}: {},", argname, arg.ty.0)?;
-                    }
-                }
-                syntax::RecvStrategy::FromPrimitive(ty)
-                | syntax::RecvStrategy::From(ty, _) => {
-                    writeln!(out, "    pub raw_{}: {},", argname, ty.0)?;
-                    need_args_impl = true;
-                }
-            }
-        }
-        writeln!(out, "}}")?;
-        writeln!(out)?;
 
-        if need_args_impl {
-            writeln!(out, "impl {}_{}_ARGS {{", iface.name, name)?;
-            for (argname, arg) in &op.args {
-                match &arg.recv {
-                    syntax::RecvStrategy::FromPrimitive(ty) => {
-                        writeln!(
-                            out,
-                            "    pub fn {}(&self) -> Option<{}> {{",
-                            argname, arg.ty.0
-                        )?;
-                        writeln!(
-                            out,
-                            "        userlib::FromPrimitive::from_{}(self.raw_{})",
-                            ty.0, argname
-                        )?;
-                        writeln!(out, "    }}")?;
+                // ssmarshal guarantees that the serialized size will be no longer
+                // than the size of the input struct. Note that this may be larger
+                // than the sum of struct members!
+                syntax::Encoding::Ssmarshal => {
+                    let args = format_ident!("{}_{name}_ARGS", iface.name);
+                    quote! { core::mem::size_of::<#args>() }
+                }
+
+                // hubpack's SerializedSize traits defines a `MAX_SIZE` associated
+                // constant
+                syntax::Encoding::Hubpack => {
+                    let args = format_ident!("{}_{name}_ARGS", iface.name);
+                    quote! { <#args as hubpack::SerializedSize>::MAX_SIZE }
+                }
+            };
+
+            let tokens = quote! {
+                pub const #const_name: usize = #val;
+            };
+            msgsize_names.push(const_name);
+            tokens
+        };
+        let reply_size = {
+            let const_name = name.as_reply_size();
+            let val = match &op.reply {
+                syntax::Reply::Result { ok, .. } => {
+                    // This strategy only uses bytes for the OK side of the type,
+                    // and only sends one type, so:
+                    match op.encoding {
+                        syntax::Encoding::Zerocopy
+                        | syntax::Encoding::Ssmarshal => quote! {
+                           core::mem::size_of::<#ok>()
+                        },
+                        syntax::Encoding::Hubpack => quote! {
+                            <#ok as hubpack::SerializedSize>::MAX_SIZE
+                        },
                     }
-                    syntax::RecvStrategy::FromBytes => {
-                        // The only FromBytes type which also needs a decoder
-                        // function is a `bool` encoded as a single `u8`
-                        if arg.ty.0 == "bool" {
-                            writeln!(
-                                out,
-                                "    pub fn {}(&self) -> bool {{",
-                                argname
-                            )?;
-                            writeln!(out, "        self.raw_{} != 0", argname)?;
-                            writeln!(out, "    }}")?;
+                }
+                syntax::Reply::Simple(t) => match op.encoding {
+                    syntax::Encoding::Zerocopy
+                    | syntax::Encoding::Ssmarshal => quote! {
+                        core::mem::size_of::<#t>()
+                    },
+                    syntax::Encoding::Hubpack => quote! {
+                        <#t as hubpack::SerializedSize>::MAX_SIZE
+                    },
+                },
+            };
+            quote! {
+                pub const #const_name: usize = #val;
+            }
+        };
+        quote! {
+            #msg_size
+            #reply_size
+        }
+    });
+
+    quote! {
+        #( #consts )*
+
+        // `max_incoming_size` may compare `max < 0`, which we want to ignore
+        #[allow(clippy::absurd_extreme_comparisons)]
+        const fn max_incoming_size() -> usize {
+            let mut max = 0;
+            #(
+                if max < #msgsize_names {
+                    max = #msgsize_names;
+                }
+            )*
+            max
+        }
+        pub const INCOMING_SIZE: usize = max_incoming_size();
+    }
+}
+
+pub fn generate_server_conversions(iface: &syntax::Interface) -> TokenStream {
+    let conversions = iface.ops.iter().map(|(name, op)| {
+        // Define args struct.
+            let attrs = match op.encoding {
+                syntax::Encoding::Zerocopy => quote! {
+                    #[repr(C, packed)]
+                    #[derive(Copy, Clone, zerocopy::FromBytes, zerocopy::Unaligned)]
+                },
+                syntax::Encoding::Ssmarshal => quote! {
+                    #[derive(Copy, Clone, serde::Deserialize)]
+                },
+                syntax::Encoding::Hubpack => quote! {
+                    #[derive(Copy, Clone, serde::Deserialize, hubpack::SerializedSize)]
+                },
+            };
+            if !matches!(op.encoding, syntax::Encoding::Zerocopy) {
+                // The recv strategy thing only really makes sense for the Zerocopy
+                // encoding. In particular, generated clients for the other encoding
+                // won't use it.
+                for (argname, arg) in &op.args {
+                    if !matches!(arg.recv, syntax::RecvStrategy::FromBytes) {
+                        panic!("operation {name} argument {argname} uses a recv strategy, \
+                            but this won't work with Ssmarshal/Hubpack encoding (remove it)");
+                    }
+                }
+            }
+            let mut need_args_impl = false;
+            let args = op.args.iter().map(|(argname, arg)| {
+                match &arg.recv {
+                    syntax::RecvStrategy::FromBytes if arg.ty.is_bool() => {
+                        // Special-case handling to send bools using a Zerocopy
+                        // encoding strategy, for efficiency.
+                        let ident =argname.raw_prefixed();
+                        need_args_impl = true;
+                        quote! {
+                            pub #ident: u8
                         }
                     }
-                    _ => (),
+                    syntax::RecvStrategy::FromBytes => {
+                        let ty = &arg.ty;
+                        quote! {pub #argname: #ty }
+                    }
+                    syntax::RecvStrategy::FromPrimitive(ty)
+                    | syntax::RecvStrategy::From(ty, _) => {
+                        need_args_impl = true;
+                        let ident = argname.raw_prefixed();
+                        quote! {
+                            pub #ident: #ty
+                        }
+                    }
+                }
+            });
+            let struct_name = format_ident!("{}_{name}_ARGS", iface.name);
+            let struct_def = quote! {
+                #attrs
+                #[allow(non_camel_case_types)]
+                pub struct #struct_name {
+                    #( #args ),*
+                }
+            };
+            let args_impl = if need_args_impl {
+                let args_fns = op.args.iter().map(|(argname, arg)| {
+                    match &arg.recv {
+                        syntax::RecvStrategy::FromPrimitive(ty) => {
+                            let arg_ty = &arg.ty;
+                            let raw_argname = argname.raw_prefixed();
+                            let from_ty = format_ident!("from_{ty}");
+                            quote! {
+                                pub fn #argname(&self) -> Option<#arg_ty> {
+                                    userlib::FromPrimitive::#from_ty(self.#raw_argname)
+                                }
+                            }
+                        }
+                        syntax::RecvStrategy::FromBytes if arg.ty.is_bool() => {
+                            // The only FromBytes type which also needs a decoder
+                            // function is a `bool` encoded as a single `u8`
+                            let raw_argname = argname.raw_prefixed();
+                            quote! {
+                                pub fn #argname(&self) -> bool {
+                                    self.#raw_argname != 0
+                                }
+                            }
+                        }
+                        _ => quote! {}
+                    }
+                });
+                quote! {
+                    impl #struct_name {
+                        #( #args_fns )*
+                    }
+                }
+            } else {
+                quote! {}
+            };
+
+            let read_fn = {
+                let read_fn = format_ident!("read_{}_msg", name);
+                match op.encoding {
+                    syntax::Encoding::Zerocopy => quote! {
+                        pub fn #read_fn(bytes: &[u8]) -> Option<&#struct_name> {
+                            Some(zerocopy::LayoutVerified::<_, #struct_name>::new_unaligned(bytes)?
+                                .into_ref())
+                        }
+                    },
+                    syntax::Encoding::Ssmarshal => quote! {
+                        pub fn #read_fn(bytes: &[u8]) -> Option<#struct_name> {
+                            ssmarshal::deserialize(bytes).ok().map(|(x, _)| x)
+                        }
+                    },
+                    syntax::Encoding::Hubpack => quote! {
+                        pub fn #read_fn(bytes: &[u8]) -> Option<#struct_name> {
+                            hubpack::deserialize(bytes).ok().map(|(x, _)| x)
+                        }
+                    },
+                }
+            };
+
+            // The DWARF generated for types is load-bearing in that Humility
+            // potentially needs them to be able to form arguments to Idol calls
+            // and to make sense of the reply.  But if an Idol server is declared
+            // without a consuming Idol client, any synthetic reply type won't be
+            // generated.  To force any synthetic reply type definition to be
+            // generated, we create a meaningless static (that itself will be
+            // optimized away), which has the side-effect of getting the type that
+            // we need in the binary (but without changing the generated text or
+            // data).
+            let mut reply_ty_def = quote! {};
+
+            if let syntax::Reply::Result { ok, err: _ } = &op.reply {
+                if let syntax::Encoding::Zerocopy = op.encoding {
+                    let reply_ty = format_ident!("{}_{name}_REPLY", iface.name);
+                    let static_name = format_ident!(
+                        "{}_{}_REPLY",
+                        iface.name.uppercase(),
+                        name.uppercase(),
+                    );
+                    reply_ty_def = quote! {
+                        #[repr(C, packed)]
+                        struct #reply_ty {
+                            value: #ok,
+                        }
+                        #[allow(dead_code)]
+                        static #static_name: Option<&#reply_ty> = None;
+                    }
+                }
+            };
+
+            quote! {
+                #struct_def
+                #args_impl
+                #read_fn
+                #reply_ty_def
+            }
+        });
+    quote! {
+        #( #conversions )*
+    }
+}
+
+pub fn generate_server_op_impl(iface: &syntax::Interface) -> TokenStream {
+    let op_enum = iface.name.as_op_enum();
+    let max_reply_size_cases = iface.ops.keys().map(|opname| {
+        let reply_size = opname.as_reply_size();
+        quote! {
+            Self::#opname => #reply_size,
+        }
+    });
+    let required_leases_cases = iface.ops.iter().map(|(opname, op)| {
+        let leases = op.leases.len();
+        quote! {
+            Self::#opname => #leases,
+        }
+    });
+    quote! {
+        #[automatically_derived]
+        impl idol_runtime::ServerOp for #op_enum {
+            fn max_reply_size(self) -> usize {
+                match self {
+                    #( #max_reply_size_cases )*
                 }
             }
-            writeln!(out, "}}")?;
-        }
 
-        match op.encoding {
-            syntax::Encoding::Zerocopy => {
-                writeln!(out, "pub fn read_{}_msg(bytes: &[u8])", name)?;
-                writeln!(out, "    -> Option<&{}_{}_ARGS>", iface.name, name)?;
-                writeln!(out, "{{")?;
-                writeln!(
-                    out,
-                    "    Some(zerocopy::LayoutVerified::<_, {}_{}_ARGS>::new_unaligned(bytes)?",
-                    iface.name, name
-                )?;
-                writeln!(out, "        .into_ref())")?;
-                writeln!(out, "}}")?;
-            }
-            syntax::Encoding::Ssmarshal => {
-                writeln!(out, "pub fn read_{}_msg(bytes: &[u8])", name)?;
-                writeln!(out, "    -> Option<{}_{}_ARGS>", iface.name, name)?;
-                writeln!(out, "{{")?;
-                writeln!(
-                    out,
-                    "    ssmarshal::deserialize(bytes).ok().map(|(x, _)| x)"
-                )?;
-                writeln!(out, "}}")?;
-            }
-            syntax::Encoding::Hubpack => {
-                writeln!(out, "pub fn read_{}_msg(bytes: &[u8])", name)?;
-                writeln!(out, "    -> Option<{}_{}_ARGS>", iface.name, name)?;
-                writeln!(out, "{{")?;
-                writeln!(
-                    out,
-                    "    hubpack::deserialize(bytes).ok().map(|(x, _)| x)"
-                )?;
-                writeln!(out, "}}")?;
-            }
-        }
-
-        // The DWARF generated for types is load-bearing in that Humility
-        // potentially needs them to be able to form arguments to Idol calls
-        // and to make sense of the reply.  But if an Idol server is declared
-        // without a consuming Idol client, any synthetic reply type won't be
-        // generated.  To force any synthetic reply type definition to be
-        // generated, we create a meaningless static (that itself will be
-        // optimized away), which has the side-effect of getting the type that
-        // we need in the binary (but without changing the generated text or
-        // data).
-        if let syntax::Reply::Result { ok, err: _ } = &op.reply {
-            if let syntax::Encoding::Zerocopy = op.encoding {
-                let reply_ty = format!("{}_{}_REPLY", iface.name, name);
-                writeln!(out, "#[repr(C, packed)]")?;
-                writeln!(out, "struct {} {{", reply_ty)?;
-                writeln!(out, "    value: {},", ok.repr_ty())?;
-                writeln!(out, "}}\n")?;
-
-                writeln!(out, "#[allow(dead_code)]")?;
-                writeln!(
-                    out,
-                    "static {}: Option<&{}> = None;",
-                    reply_ty.to_uppercase(),
-                    reply_ty
-                )?;
+            fn required_lease_count(self) -> usize {
+                match self {
+                    #( #required_leases_cases )*
+                }
             }
         }
     }
-
-    Ok(())
 }
 
-pub fn generate_server_op_impl(
-    iface: &syntax::Interface,
-    mut out: impl Write,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    writeln!(
-        out,
-        "impl idol_runtime::ServerOp for {}Operation {{",
-        iface.name
-    )?;
-
-    writeln!(out, "    fn max_reply_size(self) -> usize {{")?;
-    writeln!(out, "        match self {{")?;
-    for opname in iface.ops.keys() {
-        writeln!(
-            out,
-            "            Self::{} => {}_REPLY_SIZE,",
-            opname,
-            opname.to_uppercase()
-        )?;
-    }
-    writeln!(out, "        }}")?;
-    writeln!(out, "    }}")?;
-    writeln!(out)?;
-
-    writeln!(out, "    fn required_lease_count(self) -> usize {{")?;
-    writeln!(out, "        match self {{")?;
-    // Note: if we start allowing optional leases this will have to get fancier.
-    for (opname, op) in &iface.ops {
-        writeln!(out, "            Self::{} => {},", opname, op.leases.len(),)?;
-    }
-    writeln!(out, "        }}")?;
-    writeln!(out, "    }}")?;
-    writeln!(out)?;
-
-    writeln!(out, "}}")?;
-
-    Ok(())
-}
-
+// `Name` is only mutable as it contains `OnceCell`s, but they don't effect its
+// `Hash`, `PartialEq`, `Eq`, `Ord`, or `PartialOrd` implementations. So, it can
+// safely be used as a map key.
+#[allow(clippy::mutable_key_type)]
 pub fn generate_server_in_order_trait(
     iface: &syntax::Interface,
-    mut out: impl Write,
     allowed_callers: &BTreeMap<String, Vec<usize>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<TokenStream, Box<dyn std::error::Error + Send + Sync>> {
     // Ensure any operations listed in `allowed_callers` actually exist for this
     // server.
     for opname in allowed_callers.keys() {
-        if !iface.ops.contains_key(opname) {
+        if !iface.ops.contains_key(opname.as_str()) {
             return Err(Box::from(format!(
                 "allowed_callers operation `{}` does not exist for this server",
                 opname
@@ -372,141 +376,13 @@ pub fn generate_server_in_order_trait(
         }
     }
 
-    let trt = format!("InOrder{}Impl", iface.name);
+    let iface_name = &iface.name;
+    let trt = format_ident!("InOrder{iface_name}Impl");
+    let trait_def = generate_trait_def(iface, &trt);
 
-    writeln!(out, "pub trait {}: idol_runtime::NotificationHandler {{", trt)?;
-    writeln!(
-        out,
-        "    fn recv_source(&self) -> Option<userlib::TaskId> {{"
-    )?;
-    writeln!(out, "        None")?;
-    writeln!(out, "    }}")?;
-    writeln!(out)?;
-    writeln!(out, "    fn closed_recv_fail(&mut self) {{")?;
-    writeln!(out, "        panic!()")?;
-    writeln!(out, "    }}")?;
-    writeln!(out)?;
-    for (name, op) in &iface.ops {
-        writeln!(out, "    fn {}(", name)?;
-        writeln!(out, "        &mut self,")?;
-        writeln!(out, "        msg: &userlib::RecvMessage,")?;
-        for (argname, arg) in &op.args {
-            writeln!(out, "        {}: {},", argname, arg.ty.0)?;
-        }
-        for (leasename, lease) in &op.leases {
-            if let Some(n) = &lease.max_len {
-                write!(out, "        {}: idol_runtime::LenLimit<idol_runtime::Leased<idol_runtime::", leasename)?;
-                if lease.read {
-                    write!(out, "R")?;
-                }
-                if lease.write {
-                    write!(out, "W")?;
-                }
-                writeln!(out, ", {}>, {}>,", lease.ty.0, n)?;
-            } else {
-                write!(
-                    out,
-                    "        {}: idol_runtime::Leased<idol_runtime::",
-                    leasename
-                )?;
-                if lease.read {
-                    write!(out, "R")?;
-                }
-                if lease.write {
-                    write!(out, "W")?;
-                }
-                writeln!(out, ", {}>,", lease.ty.0)?;
-            }
-        }
-        write!(out, ")")?;
-
-        let mut error_type_bounds = None;
-        match &op.reply {
-            syntax::Reply::Result { ok, err } => {
-                write!(
-                    out,
-                    " -> Result<{}, idol_runtime::RequestError<",
-                    ok.display()
-                )?;
-                match err {
-                    syntax::Error::CLike(ty) => {
-                        write!(out, "{ty}")?;
-
-                        // For non-idempotent operations, generate a bound on
-                        // the error type ensuring it can represent server
-                        // death.
-                        if !op.idempotent {
-                            error_type_bounds = Some(format!(
-                                "where {ty}: idol_runtime::IHaveConsideredServerDeathWithThisErrorType"
-                            ));
-                        }
-                    }
-                    syntax::Error::Complex(ty) => {
-                        write!(out, "{ty}")?;
-
-                        // For non-idempotent operations, generate a bound on
-                        // the error type ensuring it can represent server
-                        // death.
-                        if !op.idempotent {
-                            error_type_bounds = Some(format!(
-                                "where {ty}: From<idol_runtime::ServerDeath>"
-                            ));
-                        }
-                    }
-                    syntax::Error::ServerDeath => {
-                        write!(out, " core::convert::Infallible")?;
-                    }
-                }
-                write!(out, ">>")?;
-            }
-            syntax::Reply::Simple(t) => {
-                write!(
-                    out,
-                    " -> Result<{}, idol_runtime::RequestError<core::convert::Infallible>>",
-                    t.display()
-                )?;
-            }
-        }
-
-        if let Some(error_type_bounds) = error_type_bounds {
-            write!(out, " {error_type_bounds}")?;
-        }
-        writeln!(out, ";")?;
-        writeln!(out)?;
-    }
-    writeln!(out, "}}")?;
-    writeln!(out)?;
-
-    writeln!(out, "impl<S: {}> idol_runtime::Server<{}Operation> for (core::marker::PhantomData<{1}Operation>, &'_ mut S) {{", trt, iface.name)?;
-
-    writeln!(
-        out,
-        "    fn recv_source(&self) -> Option<userlib::TaskId> {{"
-    )?;
-    writeln!(out, "        <S as {}>::recv_source(self.1)", trt)?;
-    writeln!(out, "    }}")?;
-    writeln!(out)?;
-    writeln!(out, "    fn closed_recv_fail(&mut self) {{")?;
-    writeln!(out, "        <S as {}>::closed_recv_fail(self.1)", trt)?;
-    writeln!(out, "    }}")?;
-    writeln!(out)?;
-    writeln!(out, "    fn handle(")?;
-    writeln!(out, "        &mut self,")?;
-    writeln!(out, "        op: {}Operation,", iface.name)?;
-    writeln!(out, "        incoming: &[u8],")?;
-    writeln!(out, "        rm: &userlib::RecvMessage,")?;
-    writeln!(
-        out,
-        "    ) -> Result<(), idol_runtime::RequestError<u16>> {{"
-    )?;
-    writeln!(out, "        #[allow(unused_imports)]")?;
-    writeln!(out, "        use core::convert::TryInto;")?;
-    writeln!(out, "        use idol_runtime::ClientError;")?;
-    writeln!(out, "        match op {{")?;
-
-    for (opname, op) in &iface.ops {
-        writeln!(out, "            {}Operation::{} => {{", iface.name, opname)?;
-        if let Some(allowed_callers) = allowed_callers.get(opname) {
+    let enum_name = iface.name.as_op_enum();
+    let op_cases = iface.ops.iter().map(|(opname, op)| {
+        let check_allowed = if let Some(allowed_callers) = allowed_callers.get(opname.as_str()) {
             // With our current optimization settings and rustc/llvm version,
             // the compiler generates better code for raw `if` checks than it
             // does for the more general `[T;N].contains(&T)`. We'll do a bit of
@@ -514,80 +390,78 @@ pub fn generate_server_in_order_trait(
             // (which we expect it to be basically always), we'll generate a
             // suitable `if`. For longer allowed_callers lists, we'll fall back
             // to `[T;N].contains(&T)`, which produces a loop.
-            if allowed_callers.len() < 4 {
-                writeln!(
-                    out,
-                    "                let sender = rm.sender.index();"
-                )?;
-                let conditions = allowed_callers
-                    .iter()
-                    .map(|task_id| format!("sender != {}", task_id))
-                    .collect::<Vec<_>>();
-                writeln!(
-                    out,
-                    "                if {} {{",
-                    conditions.join(" && ")
-                )?;
+            let cond = if allowed_callers.len() < 4 {
+                quote! {
+                    {
+                        let sender = rm.sender.index();
+                        #( sender != #allowed_callers )&&*
+                    }
+                }
             } else {
-                let allowed_task_indices = allowed_callers
-                    .iter()
-                    .map(|task_id| format!("{},", task_id))
-                    .collect::<String>();
-                writeln!(
-                    out,
-                    "                if ![{}].contains(&rm.sender.index()) {{",
-                    allowed_task_indices,
-                )?;
+                quote! {
+                    ![#( #allowed_callers ),*].contains(&rm.sender.index())
+                }
+            };
+            quote! {
+                // Clippy doesn't like when the block generated by the len < 4
+                // case is in the if condition, so assign it to a variable.
+                let disallowed = #cond;
+                if disallowed {
+                    return Err(idol_runtime::RequestError::Fail(
+                        idol_runtime::ClientError::AccessViolation
+                    ));
+                }
             }
-
-            writeln!(
-                out,
-                "                    return Err(idol_runtime::RequestError::Fail(idol_runtime::ClientError::AccessViolation));"
-            )?;
-            writeln!(out, "                }}")?;
-        }
-        writeln!(
-            out,
-            "                let {}args = read_{}_msg(incoming).ok_or_else(|| ClientError::BadMessageContents.fail())?;",
-            if op.args.is_empty() { "_" } else { "" },
-            opname
-        )?;
-        writeln!(out, "                let r = self.1.{}(", opname)?;
-        writeln!(out, "                    rm,")?;
-        for (argname, arg) in &op.args {
+        } else {
+            quote!{}
+        };
+        let read = {
+            let arg_var = if op.args.is_empty() {
+                quote! { _ }
+            } else {
+                quote! { args }
+            };
+            let readfn = format_ident!("read_{opname}_msg");
+            quote! {
+                let #arg_var = #readfn(incoming).ok_or_else(|| {
+                    idol_runtime::ClientError::BadMessageContents.fail()
+                })?;
+            }
+        };
+        let args = op.args.iter().map(|(argname, arg)| {
             match &arg.recv {
                 syntax::RecvStrategy::FromBytes => {
-                    writeln!(
-                        out,
-                        "                    args.{}{},",
-                        argname,
-                        if arg.ty.0 == "bool" { "()" } else { "" }
-                    )?;
-                }
+                    let thingy = if arg.ty.is_bool() {
+                        quote! { #argname() }
+                    } else {
+                        quote! { #argname }
+                    };
+                    quote! {
+                        args.#thingy,
+                    }
+                },
                 syntax::RecvStrategy::From(_, None) => {
-                    writeln!(
-                        out,
-                        "                    args.raw_{}.into(),",
-                        argname
-                    )?;
+                    let name = argname.raw_prefixed();
+                    quote! {
+                        args.#name.into(),
+                    }
                 }
                 syntax::RecvStrategy::From(_, Some(f)) => {
-                    writeln!(
-                        out,
-                        "                    {}(args.raw_{}),",
-                        f, argname
-                    )?;
+                    let name = argname.raw_prefixed();
+                    quote! {
+                        #f(args.#name),
+                    }
                 }
                 syntax::RecvStrategy::FromPrimitive(_) => {
-                    writeln!(
-                        out,
-                        "                    args.{}().ok_or_else(|| ClientError::BadMessageContents.fail())?,",
-                        argname
-                    )?;
+                    quote! {
+                        args.#argname().ok_or_else(|| {
+                            idol_runtime::ClientError::BadMessageContents.fail()
+                        })?,
+                    }
                 }
             }
-        }
-        for (i, lease) in op.leases.values().enumerate() {
+        });
+        let leases = op.leases.iter().enumerate().map(|(i, (leasename, lease))| {
             // This is gross, but, let's spot us some slices :-(
             let fun = match (lease.read, lease.write) {
                 (true, false) => "read_only",
@@ -596,87 +470,66 @@ pub fn generate_server_in_order_trait(
                 _ => unreachable!(),
             };
 
-            let (suffix, limit) = if lease.ty.appears_unsized() {
+            let (fun, limit) = if lease.ty.appears_unsized() {
                 let max_len = if let Some(n) = lease.max_len {
                     // It's ok to unwrap the value in server code because we've
                     // just gotten it _out of_ a NonZeroU32 here, so we know
                     // it'll be statically valid.
-                    format!(
-                        ", Some(core::num::NonZeroU32::new({}).unwrap_lite())",
-                        n
-                    )
+                    let n = n.get();
+                    quote! {
+                        , Some(core::num::NonZeroU32::new(#n).unwrap_lite())
+                    }
                 } else {
-                    ", None".to_string()
+                    quote!{ , None }
                 };
-                ("_slice", max_len)
+                (format_ident!("{fun}_slice"), max_len)
+            } else if lease.max_len.is_some() {
+                panic!(
+                    "Lease {i} ({leasename}) on operation {iface_name}.{opname} \
+                    has sized type but also max_len field"
+                );
             } else {
-                if lease.max_len.is_some() {
-                    panic!("Lease {} on operation {}.{} has sized type but also max_len field",
-                        i, iface.name, opname);
-                }
-                ("", "".to_string())
+                (format_ident!("{fun}"), quote!{} )
             };
-
-            write!(out, "                    idol_runtime::Leased::{}{}(rm.sender, {}{}).ok_or_else(|| ClientError::BadLease.fail())?", fun, suffix, i, limit)?;
-            if lease.max_len.is_some() {
-                write!(out, ".try_into().unwrap_lite()")?;
+            let maybe_unwrap = if lease.max_len.is_some() {
+                quote! { .try_into().unwrap_lite() }
+            } else {
+                quote!{}
+            };
+            quote! {
+                idol_runtime::Leased::#fun(rm.sender, #i #limit)
+                    .ok_or_else(|| idol_runtime::ClientError::BadLease.fail())?#maybe_unwrap,
             }
-            writeln!(out, ",")?;
-        }
-        writeln!(out, "                );")?;
-        match &op.reply {
-            syntax::Reply::Simple(_t) => {
-                writeln!(out, "                match r {{")?;
-                writeln!(out, "                    Ok(val) => {{")?;
-                match op.encoding {
-                    syntax::Encoding::Zerocopy => {
-                        writeln!(out, "                        userlib::sys_reply(rm.sender, 0, zerocopy::AsBytes::as_bytes(&val));")?;
-                    }
-                    syntax::Encoding::Ssmarshal => {
-                        writeln!(out, "                        let mut reply_buf = [0u8; {}_REPLY_SIZE];",
-                            opname.to_uppercase())?;
-                        writeln!(out, "                        let n_reply = ssmarshal::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap_lite();")?;
-                        writeln!(out, "                        userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);")?;
-                    }
-                    syntax::Encoding::Hubpack => {
-                        writeln!(out, "                        let mut reply_buf = [0u8; {}_REPLY_SIZE];",
-                            opname.to_uppercase())?;
-                        writeln!(out, "                        let n_reply = hubpack::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap_lite();")?;
-                        writeln!(out, "                        userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);")?;
+        });
+        let reply = {
+            let encode = match op.encoding {
+                syntax::Encoding::Zerocopy => quote! {
+                    userlib::sys_reply(rm.sender, 0, zerocopy::AsBytes::as_bytes(&val));
+                },
+                syntax::Encoding::Hubpack | syntax::Encoding::Ssmarshal => {
+                    let reply_size = opname.as_reply_size();
+                    let serializer = op.encoding.crate_name();
+                    quote! {
+                        let mut reply_buf = [0u8; #reply_size];
+                        let n_reply = #serializer::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap_lite();
+                        userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);
                     }
                 }
-                writeln!(out, "                        Ok(())")?;
-                writeln!(out, "                    }}")?;
-                // Simple returns can only return ClientError. The compiler
-                // can't see this. Jump through some hoops:
-                writeln!(out, "                    Err(val) => Err(val.map_runtime(|e| match e {{ }})),")?;
-                writeln!(out, "                }}")?;
-            }
-            syntax::Reply::Result { err, .. } => {
-                writeln!(out, "                match r {{")?;
-                writeln!(out, "                    Ok(val) => {{")?;
-                match op.encoding {
-                    syntax::Encoding::Zerocopy => {
-                        writeln!(out, "                        userlib::sys_reply(rm.sender, 0, zerocopy::AsBytes::as_bytes(&val));")?;
+            };
+            match &op.reply {
+                syntax::Reply::Simple(_) => quote! {
+                    match r {
+                        Ok(val) => {
+                            #encode
+                            Ok(())
+                        }
+                        // Simple returns can only return ClientError. The compiler
+                        // can't see this. Jump through some hoops:
+                        Err(val) => Err(val.map_runtime(|e| match e {})),
                     }
-                    syntax::Encoding::Ssmarshal => {
-                        writeln!(out, "                        let mut reply_buf = [0u8; {}_REPLY_SIZE];",
-                            opname.to_uppercase())?;
-                        writeln!(out, "                        let n_reply = ssmarshal::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap_lite();")?;
-                        writeln!(out, "                        userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);")?;
-                    }
-                    syntax::Encoding::Hubpack => {
-                        writeln!(out, "                        let mut reply_buf = [0u8; {}_REPLY_SIZE];",
-                            opname.to_uppercase())?;
-                        writeln!(out, "                        let n_reply = hubpack::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap_lite();")?;
-                        writeln!(out, "                        userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);")?;
-                    }
-                }
-                writeln!(out, "                        Ok(())")?;
-                writeln!(out, "                    }}")?;
-                writeln!(out, "                    Err(val) => {{")?;
-                match err {
-                    syntax::Error::Complex(ty) => {
+                },
+                syntax::Reply::Result{ err, .. } => {
+                    let err_case = match err {
                         // It might be surprising, but to return a complex error
                         // we need to behave very much like the reply code
                         // above: rather than returning `Err`, we need to
@@ -686,83 +539,195 @@ pub fn generate_server_in_order_trait(
                         //
                         // So, the fact that this error returns `Ok` is not a
                         // bug.
-                        match op.encoding {
-                            syntax::Encoding::Hubpack => {
-                                writeln!(out, "                        match val {{")?;
-                                writeln!(out, "                            idol_runtime::RequestError::Fail(f) => {{")?;
-                                // Note: because of the way `into_fault` works,
-                                // if it returns None, we don't send a reply at
-                                // all. This is because None indicates that the
-                                // caller was restarted or otherwise crashed
-                                // while waiting.
-                                writeln!(out, "                                if let Some(fault) = f.into_fault() {{")?;
-                                writeln!(out, "                                    userlib::sys_reply_fault(rm.sender, fault);")?;
-                                writeln!(out, "                                }}")?;
-                                writeln!(out, "                            }}")?;
-                                writeln!(out, "                            idol_runtime::RequestError::Runtime(e) => {{")?;
-                                writeln!(out, "                                let mut reply_buf = [0u8; <{ty} as hubpack::SerializedSize>::MAX_SIZE];")?;
-                                writeln!(out, "                                let n_reply = hubpack::serialize(&mut reply_buf, &e).map_err(|_| ()).unwrap_lite();")?;
-                                writeln!(out, "                                userlib::sys_reply(rm.sender, 1, &reply_buf[..n_reply]);")?;
-                                writeln!(out, "                            }}")?;
-                                writeln!(out, "                        }}")?;
-                            }
-                            _ => panic!("Complex error types not supported for {:?} encoding", op.encoding),
+                        syntax::Error::Complex (ty) =>  match op.encoding {
+                            syntax::Encoding::Hubpack => quote! {
+                                match val {
+                                    idol_runtime::RequestError::Fail(f) => {
+                                        // Note: because of the way `into_fault` works,
+                                        // if it returns None, we don't send a reply at
+                                        // all. This is because None indicates that the
+                                        // caller was restarted or otherwise crashed
+                                        if let Some(fault) = f.into_fault() {
+                                            userlib::sys_reply_fault(rm.sender, fault);
+                                        }
+                                    }
+                                    idol_runtime::RequestError::Runtime(e) => {
+                                        let mut reply_buf = [0u8; <#ty as hubpack::SerializedSize>::MAX_SIZE];
+                                        let n_reply = hubpack::serialize(&mut reply_buf, &e).map_err(|_| ()).unwrap_lite();
+                                        userlib::sys_reply(rm.sender, 1, &reply_buf[..n_reply]);
+                                    }
+                                }
+                                Ok(())
+                            },
+                            encoding => panic!("Complex error types not supported for {encoding:?} encoding"),
+                        },
+                        syntax::Error::CLike(_) => quote! {
+                            Err(val.map_runtime(u16::from))
+                        },
+                        syntax::Error::ServerDeath => quote! {
+                            Err(val.map_runtime(|e| match e {}))
                         }
-                        writeln!(out, "                        Ok(())")?;
-                    }
-                    syntax::Error::CLike(_) => {
-                        writeln!(
-                            out,
-                            "                        Err(val.map_runtime(u16::from))"
-                        )?;
-                    }
-                    syntax::Error::ServerDeath => {
-                        writeln!(
-                            out,
-                            "                        Err(val.map_runtime(|e| match e {{ }}))"
-                        )?;
+                    };
+                    quote! {
+                        match r {
+                            Ok(val) => {
+                                #encode
+                                Ok(())
+                            }
+                            Err(val) => {
+                                #err_case
+                            }
+                        }
                     }
                 }
-                writeln!(out, "                    }}")?;
-                writeln!(out, "                }}")?;
+            }
+        };
+        quote! {
+            #enum_name::#opname => {
+                #check_allowed
+                #read
+                let r = self.1.#opname(
+                    rm,
+                    #( #args )*
+                    #( #leases )*
+                );
+                #reply
             }
         }
-        writeln!(out, "            }}")?;
+    });
+    Ok(quote! {
+        #trait_def
+
+        #[automatically_derived]
+        impl <S: #trt> idol_runtime::Server<#enum_name> for (core::marker::PhantomData<#enum_name>, &'_ mut S) {
+            fn recv_source(&self) -> Option<userlib::TaskId> {
+                <S as #trt>::recv_source(self.1)
+            }
+
+            fn closed_recv_fail(&mut self) {
+                <S as #trt>::closed_recv_fail(self.1)
+            }
+            fn handle(
+                &mut self,
+                op: #enum_name,
+                incoming: &[u8],
+                rm: &userlib::RecvMessage,
+            ) -> Result<(), idol_runtime::RequestError<u16>> {
+                #[allow(unused_imports)]
+                use core::convert::TryInto;
+                match op {
+                    #( #op_cases )*
+                }
+            }
+        }
+    })
+}
+
+fn generate_trait_def(
+    iface: &syntax::Interface,
+    trt: &syn::Ident,
+) -> TokenStream {
+    let ops = iface.ops.iter().map(|(name, op)| {
+        let args = op.args.iter().map(|(argname, arg)| {
+            let ty = &arg.ty;
+            quote! {
+                #argname: #ty,
+            }
+        });
+        let leases = op.leases.iter().map(|(leasename, lease)| {
+            let r = if lease.read { "R" } else { ""};
+            let w = if lease.write { "W" } else { ""};
+            let lease_kind = format_ident!("{r}{w}");
+            let ty = &lease.ty;
+            if let Some(n) = lease.max_len {
+                // cast to usize here is load bearing, because `quote` will
+                // suffix this with `{n}u32` when interpolating, but it needs to
+                // be a `usize`.
+                let n = n.get() as usize;
+                quote! {
+                    #leasename: idol_runtime::LenLimit<idol_runtime::Leased<idol_runtime::#lease_kind, #ty>, #n>,
+                }
+            } else {
+                quote! {
+                    #leasename: idol_runtime::Leased<idol_runtime::#lease_kind, #ty>,
+                }
+            }
+        });
+        let mut error_type_bounds = quote! {};
+        let ret_ty = match &op.reply {
+            syntax::Reply::Result { ok, err } => {
+                let err_ty = match err {
+                    syntax::Error::CLike(ty) => {
+                        // For non-idempotent operations, generate a bound on
+                        // the error type ensuring it can represent server
+                        // death.
+                        if !op.idempotent {
+                            error_type_bounds = quote! {
+                                where #ty: idol_runtime::IHaveConsideredServerDeathWithThisErrorType
+                            };
+                        }
+                        quote! { #ty }
+                    }
+                    syntax::Error::Complex(ty) => {
+                        // For non-idempotent operations, generate a bound on
+                        // the error type ensuring it can represent server
+                        // death.
+                        if !op.idempotent {
+                            error_type_bounds = quote! {
+                                where #ty: From<idol_runtime::ServerDeath>
+                            };
+                        }
+                        quote! { #ty }
+                    }
+                    syntax::Error::ServerDeath => {
+                        quote! { core::convert::Infallible }
+                    }
+                };
+                quote! { Result<#ok, idol_runtime::RequestError<#err_ty>> }
+            },
+            syntax::Reply::Simple(t) => {
+                quote! { 
+                    Result<#t, idol_runtime::RequestError<core::convert::Infallible>>
+                }
+            },
+        };
+        quote! {
+            fn #name(
+                &mut self,
+                msg: &userlib::RecvMessage,
+                #( #args )*
+                #( #leases )*
+            ) -> #ret_ty #error_type_bounds;
+        }
+    });
+    quote! {
+        pub trait #trt: idol_runtime::NotificationHandler {
+            fn recv_source(&self) -> Option<userlib::TaskId> {
+                None
+            }
+
+            fn closed_recv_fail(&mut self) {
+                panic!()
+            }
+
+            #( #ops )*
+        }
     }
-    writeln!(out, "        }}")?;
-    writeln!(out, "    }}")?;
-
-    writeln!(out, "}}")?;
-    writeln!(out)?;
-
-    Ok(())
 }
 
 fn generate_server_section(
     iface: &syntax::Interface,
     text: &str,
-    mut out: impl Write,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> TokenStream {
+    let name = format_ident!("_{}_IDOL_DEFINITION", iface.name.uppercase());
     let bytes = text.as_bytes();
-
-    write!(
-        out,
-        r##"
-// To allow it to be pulled out by debuggers, we drop the entirety of the
-// interface definition in a dedicated (unloaded) section
-#[used]
-#[link_section = ".idolatry"]
-static _{}_IDOL_DEFINITION: [u8; {}] = ["##,
-        iface.name.to_uppercase(),
-        text.len()
-    )?;
-
-    for (i, byte) in bytes.iter().enumerate() {
-        let delim = if i % 10 == 0 { "\n    " } else { " " };
-        write!(out, "{}0x{:02x},", delim, byte)?;
+    let len = bytes.len();
+    let byte_str = syn::LitByteStr::new(bytes, proc_macro2::Span::call_site());
+    quote! {
+        // To allow it to be pulled out by debuggers, we drop the entirety of the
+        // interface definition in a dedicated (unloaded) section
+        #[used]
+        #[link_section = ".idolatry"]
+        static #name: [u8; #len] = *#byte_str;
     }
-
-    writeln!(out, "\n];\n")?;
-
-    Ok(())
 }
