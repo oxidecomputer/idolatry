@@ -608,8 +608,6 @@ pub fn generate_server_in_order_trait(
             ) -> Result<(), idol_runtime::RequestError<u16>> {
                 #[allow(unused_imports)]
                 use core::convert::TryInto;
-                #[allow(unused_imports)]
-                use idol_runtime::ClientError;
                 match op {
                     #( #op_cases )*
                 }
