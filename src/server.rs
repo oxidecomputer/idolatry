@@ -491,7 +491,8 @@ pub fn generate_server_in_order_trait(
                 quote!{}
             };
             quote! {
-                idol_runtime::Leased::#fun(rm.sender, #i #limit).ok_or_else(|| ClientError::BadLease.fail())?#maybe_unwrap,
+                idol_runtime::Leased::#fun(rm.sender, #i #limit)
+                    .ok_or_else(|| idol_runtime::ClientError::BadLease.fail())?#maybe_unwrap,
             }
         });
         let reply = {
