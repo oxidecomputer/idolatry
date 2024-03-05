@@ -407,7 +407,9 @@ pub fn generate_server_in_order_trait(
                 // case is in the if condition, so assign it to a variable.
                 let disallowed = #cond;
                 if disallowed {
-                    return Err(idol_runtime::RequestError::Fail(idol_runtime::ClientError::AccessViolation));
+                    return Err(idol_runtime::RequestError::Fail(
+                        idol_runtime::ClientError::AccessViolation
+                    ));
                 }
             }
         } else {
@@ -421,7 +423,9 @@ pub fn generate_server_in_order_trait(
             };
             let readfn = format_ident!("read_{opname}_msg");
             quote! {
-                let #arg_var = #readfn(incoming).ok_or_else(|| idol_runtime::ClientError::BadMessageContents.fail())?;
+                let #arg_var = #readfn(incoming).ok_or_else(|| {
+                    idol_runtime::ClientError::BadMessageContents.fail()
+                })?;
             }
         };
         let args = op.args.iter().map(|(argname, arg)| {
@@ -450,7 +454,9 @@ pub fn generate_server_in_order_trait(
                 }
                 syntax::RecvStrategy::FromPrimitive(_) => {
                     quote! {
-                        args.#argname().ok_or_else(|| idol_runtime::ClientError::BadMessageContents.fail())?,
+                        args.#argname().ok_or_else(|| {
+                            idol_runtime::ClientError::BadMessageContents.fail()
+                        })?,
                     }
                 }
             }
@@ -542,7 +548,7 @@ pub fn generate_server_in_order_trait(
                                         // all. This is because None indicates that the
                                         // caller was restarted or otherwise crashed
                                         if let Some(fault) = f.into_fault() {
-                                                userlib::sys_reply_fault(rm.sender, fault);
+                                            userlib::sys_reply_fault(rm.sender, fault);
                                         }
                                     }
                                     idol_runtime::RequestError::Runtime(e) => {
@@ -680,7 +686,9 @@ fn generate_trait_def(
                 quote! { Result<#ok, idol_runtime::RequestError<#err_ty>> }
             },
             syntax::Reply::Simple(t) => {
-                quote! { Result<#t, idol_runtime::RequestError<core::convert::Infallible>> }
+                quote! { 
+                    Result<#t, idol_runtime::RequestError<core::convert::Infallible>>
+                }
             },
         };
         quote! {
