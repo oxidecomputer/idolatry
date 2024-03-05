@@ -8,6 +8,30 @@ pub(crate) mod serde_helpers;
 pub mod server;
 pub mod syntax;
 
+/// Settings that configure how client and server stubs are generated.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[must_use]
+pub struct Generator {
+    pub(crate) fmt: bool,
+}
+
+impl Generator {
+    pub fn new() -> Self {
+        Self { fmt: true }
+    }
+
+    /// If `true`, generated code will be formatted with `prettyplease`.
+    pub fn with_formatting(self, fmt: bool) -> Self {
+        Self { fmt, ..self }
+    }
+}
+
+impl Default for Generator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
