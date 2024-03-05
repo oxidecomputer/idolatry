@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use super::syntax;
+use miette::{Context, IntoDiagnostic};
 use quote::quote;
 
 pub fn generate_op_enum(iface: &syntax::Interface) -> proc_macro2::TokenStream {
@@ -30,9 +31,19 @@ pub fn generate_op_enum(iface: &syntax::Interface) -> proc_macro2::TokenStream {
     }
 }
 
-pub(crate) fn fmt_tokens(
+pub fn fmt_tokens(
     tokens: proc_macro2::TokenStream,
-) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let syntax_tree = syn::parse2::<syn::File>(tokens)?;
+) -> Result<String, miette::Report> {
+    let syntax_tree = syn::parse2::<syn::File>(tokens.clone())
+        .map_err(|error| {
+            syntax::RustSyntaxError::from_syn(
+                miette::NamedSource::new(
+                    "<generated Rust source>",
+                    tokens.to_string(),
+                ),
+                error,
+            )
+        })
+        .context("failed to parse generated stub source")?;
     Ok(prettyplease::unparse(&syntax_tree))
 }

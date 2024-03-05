@@ -1,18 +1,20 @@
+use miette::IntoDiagnostic;
 use std::io::Read;
 
-fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn main() -> Result<(), miette::Report> {
     let mut text = String::new();
-    std::io::stdin().read_to_string(&mut text)?;
+    std::io::stdin()
+        .read_to_string(&mut text)
+        .into_diagnostic()?;
 
-    let iface: idol::syntax::Interface = ron::de::from_str(&text)?;
+    let iface: idol::syntax::Interface = text.parse()?;
 
     let tokens = idol::server::generate_restricted_server_support(
         &iface,
         idol::server::ServerStyle::InOrder,
         &Default::default(),
     )?;
-    let syntax_tree = syn::parse2::<syn::File>(tokens)?;
-    let formatted = prettyplease::unparse(&syntax_tree);
+    let formatted = idol::common::fmt_tokens(tokens)?;
     println!("{formatted}");
 
     Ok(())

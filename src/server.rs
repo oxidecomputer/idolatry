@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use super::{common, syntax};
+use miette::{Context, IntoDiagnostic};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::BTreeMap;
@@ -19,7 +20,7 @@ pub fn build_server_support(
     source: &str,
     stub_name: &str,
     style: ServerStyle,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), miette::Report> {
     build_restricted_server_support(source, stub_name, style, &BTreeMap::new())
 }
 
@@ -28,18 +29,25 @@ pub fn build_restricted_server_support(
     stub_name: &str,
     style: ServerStyle,
     allowed_callers: &BTreeMap<String, Vec<usize>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), miette::Report> {
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    let mut stub_file = File::create(out.join(stub_name)).unwrap();
+    let stub_path = out.join(stub_name);
+    let mut stub_file = File::create(&stub_path)
+        .into_diagnostic()
+        .with_context(|| {
+            format!("failed to create file {}", stub_path.display())
+        })?;
 
-    let text = std::fs::read_to_string(source)?;
-    let iface: syntax::Interface = ron::de::from_str(&text)?;
+    let text = std::fs::read_to_string(source)
+        .into_diagnostic()
+        .with_context(|| format!("failed to read {source}"))?;
+    let iface: syntax::Interface = text.parse()?;
     let mut tokens =
         generate_restricted_server_support(&iface, style, allowed_callers)?;
 
     tokens.extend(generate_server_section(&iface, &text));
     let formatted = common::fmt_tokens(tokens)?;
-    write!(stub_file, "{formatted}")?;
+    write!(stub_file, "{formatted}").into_diagnostic()?;
     println!("cargo:rerun-if-changed={}", source);
     Ok(())
 }
@@ -52,7 +60,7 @@ pub fn generate_restricted_server_support(
     iface: &syntax::Interface,
     style: ServerStyle,
     allowed_callers: &BTreeMap<String, Vec<usize>>,
-) -> Result<TokenStream, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<TokenStream, miette::Report> {
     let mut tokens = quote! {
         #[allow(unused_imports)]
         use userlib::UnwrapLite;
@@ -364,15 +372,13 @@ pub fn generate_server_op_impl(iface: &syntax::Interface) -> TokenStream {
 pub fn generate_server_in_order_trait(
     iface: &syntax::Interface,
     allowed_callers: &BTreeMap<String, Vec<usize>>,
-) -> Result<TokenStream, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<TokenStream, miette::Report> {
     // Ensure any operations listed in `allowed_callers` actually exist for this
     // server.
     for opname in allowed_callers.keys() {
         if !iface.ops.contains_key(opname.as_str()) {
-            return Err(Box::from(format!(
-                "allowed_callers operation `{}` does not exist for this server",
-                opname
-            )));
+            miette::bail!(
+                "allowed_callers operation `{opname}` does not exist for this server");
         }
     }
 
@@ -586,33 +592,35 @@ pub fn generate_server_in_order_trait(
         }
     });
     Ok(quote! {
-        #trait_def
+            #trait_def
 
-        #[automatically_derived]
-        impl <S: #trt> idol_runtime::Server<#enum_name> for (core::marker::PhantomData<#enum_name>, &'_ mut S) {
-            fn recv_source(&self) -> Option<userlib::TaskId> {
-                <S as #trt>::recv_source(self.1)
-            }
+            #[automatically_derived]
+            impl <S: #trt> idol_runtime::Server<#enum_name> for (core::marker::PhantomData<#enum_name>, &'_ mut S) {
+                fn recv_source(&self) -> Option<userlib::TaskId> {
+                    <S as #trt>::recv_source(self.1)
+                }
 
-            fn closed_recv_fail(&mut self) {
-                <S as #trt>::closed_recv_fail(self.1)
-            }
-            fn handle(
-                &mut self,
-                op: #enum_name,
-                incoming: &[u8],
-                rm: &userlib::RecvMessage,
-            ) -> Result<(), idol_runtime::RequestError<u16>> {
-                #[allow(unused_imports)]
-                use core::convert::TryInto;
-                #[allow(unused_imports)]
-                use idol_runtime::ClientError;
-                match op {
-                    #( #op_cases )*
+    asdf
+
+                fn closed_recv_fail(&mut self) {
+                    <S as #trt>::closed_recv_fail(self.1)
+                }
+                fn handle(
+                    &mut self,
+                    op: #enum_name,
+                    incoming: &[u8],
+                    rm: &userlib::RecvMessage,
+                ) -> Result<(), idol_runtime::RequestError<u16>> {
+                    #[allow(unused_imports)]
+                    use core::convert::TryInto;
+                    #[allow(unused_imports)]
+                    use idol_runtime::ClientError;
+                    match op {
+                        #( #op_cases )*
+                    }
                 }
             }
-        }
-    })
+        })
 }
 
 fn generate_trait_def(

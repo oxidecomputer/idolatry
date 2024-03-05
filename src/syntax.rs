@@ -49,9 +49,14 @@ impl std::fmt::Display for Name {
 }
 
 impl std::str::FromStr for Name {
-    type Err = syn::Error;
+    type Err = RustSyntaxError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let ident = syn::parse_str(s)?;
+        let ident = syn::parse_str(s).map_err(|error| {
+            RustSyntaxError::from_syn(
+                miette::NamedSource::new("name", s.to_string()),
+                error,
+            )
+        })?;
         let uppercase = s.to_uppercase();
         Ok(Self {
             as_string: s.to_string(),
@@ -158,6 +163,53 @@ impl std::borrow::Borrow<str> for Name {
     }
 }
 
+#[derive(Debug, miette::Diagnostic, thiserror::Error)]
+#[error("invalid IDL")]
+pub struct IdolError {
+    #[source_code]
+    src: miette::NamedSource<String>,
+
+    #[label = "here"]
+    span: miette::SourceSpan,
+
+    #[source]
+    #[diagnostic(source)]
+    error: ron::Error,
+}
+
+#[derive(Debug, miette::Diagnostic, thiserror::Error)]
+#[error("invalid Rust syntax: {error}")]
+pub struct RustSyntaxError {
+    #[source_code]
+    src: miette::NamedSource<String>,
+
+    #[label = "here"]
+    span: miette::SourceSpan,
+
+    error: syn::Error,
+}
+
+impl RustSyntaxError {
+    pub(crate) fn from_syn(
+        src: impl Into<miette::NamedSource<String>>,
+        error: syn::Error,
+    ) -> Self {
+        let src = src.into().with_language("Rust");
+        let span = {
+            let span = error.span();
+            let start = span.start();
+            let start = miette::SourceOffset::from_location(
+                src.inner(),
+                start.line,
+                start.column,
+            );
+            let len = span.byte_range().len();
+            miette::SourceSpan::new(start, len)
+        };
+        Self { src, span, error }
+    }
+}
+
 /// Definition of an IPC interface.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Interface {
@@ -177,15 +229,29 @@ pub struct Interface {
 }
 
 impl std::str::FromStr for Interface {
-    type Err = ron::Error;
+    type Err = IdolError;
     /// Converts the canonical text representation of an interface into an
     /// `Interface`.
     ///
     /// The canonical text representation is the Serde representation of
     /// `Interface` as encoded by RON.
-    fn from_str(text: &str) -> Result<Self, ron::Error> {
-        let iface: Self = ron::de::from_str(text)?;
-        Ok(iface)
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        ron::de::from_str::<Self>(text).map_err(
+            |ron::de::SpannedError { code, position }| {
+                IdolError {
+                    src: miette::NamedSource::new("IDL", text.to_string())
+                        .with_language("RON"),
+                    span: miette::SourceOffset::from_location(
+                        text,
+                        position.line,
+                        position.col,
+                    )
+                    .into(),
+                    error: code,
+                }
+                .into()
+            },
+        )
     }
 }
 
@@ -482,9 +548,14 @@ impl std::fmt::Display for Ty {
 }
 
 impl std::str::FromStr for Ty {
-    type Err = syn::Error;
+    type Err = RustSyntaxError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        syn::parse_str(s).map(Self)
+        syn::parse_str(s).map(Self).map_err(|error| {
+            RustSyntaxError::from_syn(
+                miette::NamedSource::new("type", s.to_string()),
+                error,
+            )
+        })
     }
 }
 
