@@ -157,7 +157,7 @@ impl Generator {
                         match op.encoding {
                             syntax::Encoding::Zerocopy
                             | syntax::Encoding::Ssmarshal => quote! {
-                            core::mem::size_of::<#ok>()
+                               core::mem::size_of::<#ok>()
                             },
                             syntax::Encoding::Hubpack => quote! {
                                 <#ok as hubpack::SerializedSize>::MAX_SIZE
@@ -296,7 +296,7 @@ impl Generator {
                 } else {
                     quote! {}
                 };
-
+    
                 let read_fn = {
                     let read_fn = format_ident!("read_{}_msg", name);
                     match op.encoding {
@@ -398,20 +398,21 @@ impl Generator {
         iface: &syntax::Interface,
         allowed_callers: &BTreeMap<String, Vec<usize>>,
     ) -> Result<TokenStream, Box<dyn std::error::Error + Send + Sync>> {
-           // Ensure any operations listed in `allowed_callers` actually exist for this
+        // Ensure any operations listed in `allowed_callers` actually exist for this
         // server.
         for opname in allowed_callers.keys() {
             if !iface.ops.contains_key(opname.as_str()) {
                 return Err(Box::from(format!(
-                    "allowed_callers operation `{}` does not exist for this server",
-                    opname
-                )));
+                "allowed_callers operation `{}` does not exist for this server",
+                opname
+            )));
             }
         }
 
         let iface_name = &iface.name;
         let trt = format_ident!("InOrder{iface_name}Impl");
         let trait_def = generate_trait_def(iface, &trt);
+        let counters = self.counters.clone().map(|ctrs| ctrs.server(iface));
 
         let enum_name = iface.name.as_op_enum();
         let op_cases = iface.ops.iter().map(|(opname, op)| {
@@ -550,15 +551,22 @@ impl Generator {
                     }
                 };
                 match &op.reply {
-                    syntax::Reply::Simple(_) => quote! {
-                        match r {
-                            Ok(val) => {
-                                #encode
-                                Ok(())
+                    syntax::Reply::Simple(_) => {
+                        let count = match counters {
+                            Some(ref ctrs) => ctrs.count_simple_op(opname),
+                            None => quote! {},
+                        };
+                        quote! {
+                            match r {
+                                Ok(val) => {
+                                    #encode
+                                    #count
+                                    Ok(())
+                                }
+                                // Simple returns can only return ClientError. The compiler
+                                // can't see this. Jump through some hoops:
+                                Err(val) => Err(val.map_runtime(|e| match e {})),
                             }
-                            // Simple returns can only return ClientError. The compiler
-                            // can't see this. Jump through some hoops:
-                            Err(val) => Err(val.map_runtime(|e| match e {})),
                         }
                     },
                     syntax::Reply::Result{ err, .. } => {
@@ -601,7 +609,12 @@ impl Generator {
                                 Err(val.map_runtime(|e| match e {}))
                             }
                         };
+                        let count = match counters {
+                            Some(ref ctrs) => ctrs.count_result(opname, quote! { r }),
+                            None => quote! {},
+                        };
                         quote! {
+                            #count
                             match r {
                                 Ok(val) => {
                                     #encode
@@ -628,11 +641,20 @@ impl Generator {
                 }
             }
         });
+        let counters = counters
+            .as_ref()
+            .map(|ctrs| ctrs.generate_defs())
+            .unwrap_or_default();
+
         Ok(quote! {
             #trait_def
 
+            #counters
+
             #[automatically_derived]
-            impl <S: #trt> idol_runtime::Server<#enum_name> for (core::marker::PhantomData<#enum_name>, &'_ mut S) {
+            impl <S: #trt> idol_runtime::Server<#enum_name>
+                for (core::marker::PhantomData<#enum_name>, &'_ mut S)
+            {
                 fn recv_source(&self) -> Option<userlib::TaskId> {
                     <S as #trt>::recv_source(self.1)
                 }
@@ -640,6 +662,7 @@ impl Generator {
                 fn closed_recv_fail(&mut self) {
                     <S as #trt>::closed_recv_fail(self.1)
                 }
+
                 fn handle(
                     &mut self,
                     op: #enum_name,
@@ -655,7 +678,6 @@ impl Generator {
             }
         })
     }
-
 }
 
 fn generate_trait_def(

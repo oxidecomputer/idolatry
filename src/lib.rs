@@ -4,24 +4,74 @@
 
 pub mod client;
 pub mod common;
+mod counters;
 pub(crate) mod serde_helpers;
 pub mod server;
 pub mod syntax;
+pub use crate::counters::CounterSettings;
 
-/// Settings that configure how client and server stubs are generated.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[must_use]
 pub struct Generator {
+    pub(crate) counters: Option<CounterSettings>,
     pub(crate) fmt: bool,
 }
 
 impl Generator {
     pub fn new() -> Self {
-        Self { fmt: true }
+        Self {
+            counters: None,
+            fmt: true,
+        }
+    }
+
+    /// If [`Some`], configures how event counters will be generated for IPC
+    /// operations. If [`None`], no counters will be generated.
+    ///
+    /// By default, counters are not enabled.
+    ///
+    /// # Examples
+    ///
+    /// Enabling counters with the default settings:
+    ///
+    /// ```
+    /// # let _ =
+    /// idol::Generator::new()
+    ///     .with_counters(idol::CounterSettings::default())
+    /// # ;
+    /// ```
+    ///
+    ///
+    /// Disabling counters (this is equivalent to `Generator::default()`):
+    ///
+    /// ```
+    /// # let _ =
+    /// idol::Generator::new()
+    ///     .with_counters(None)
+    /// # ;
+    /// ```
+    ///
+    /// Configuring counter generation:
+    ///
+    /// ```
+    /// let counters = idol::CounterSettings::default()
+    ///     .combine_client_errors(true);
+    ///
+    /// # let _ =
+    /// idol::Generator::new()
+    ///     .with_counters(counters)
+    /// # ;
+    /// ```
+    pub fn with_counters(
+        self,
+        counters: impl Into<Option<CounterSettings>>,
+    ) -> Self {
+        let counters = counters.into();
+        Self { counters, ..self }
     }
 
     /// If `true`, generated code will be formatted with `prettyplease`.
-    pub fn with_formatting(self, fmt: bool) -> Self {
+    pub fn with_fmt(self, fmt: bool) -> Self {
         Self { fmt, ..self }
     }
 }

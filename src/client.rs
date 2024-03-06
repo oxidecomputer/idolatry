@@ -71,6 +71,7 @@ impl Generator {
     ) -> Result<TokenStream, Box<dyn std::error::Error + Send + Sync>> {
         let mut ops = Vec::with_capacity(iface.ops.len());
         let iface_name = &iface.name;
+        let counters = self.counters.clone().map(|ctrs| ctrs.client(iface));
         for (idx, (name, op)) in iface.ops.iter().enumerate() {
             // Let's do some checks
             if op.idempotent {
@@ -329,21 +330,21 @@ impl Generator {
                     }
                 };
                 let leases = op.leases.iter().map(|(leasename, lease)| {
-                let (ctor, asbytes) = match (lease.read, lease.write) {
-                    (true, true) => ("read_write", "as_bytes_mut"),
-                    (false, true) => ("write_only", "as_bytes_mut"),
-                    (true, false) => ("read_only", "as_bytes"),
-                    (false, false) => panic!("should have been caught above"),
-                };
-                let ctor =
-                    syn::Ident::new(ctor, proc_macro2::Span::call_site());
-                let asbytes =
-                    syn::Ident::new(asbytes, proc_macro2::Span::call_site());
-                let argname = leasename.arg_prefixed();
-                quote! {
-                    userlib::Lease::#ctor(zerocopy::AsBytes::#asbytes(#argname))
-                }
-            });
+                    let (ctor, asbytes) = match (lease.read, lease.write) {
+                        (true, true) => ("read_write", "as_bytes_mut"),
+                        (false, true) => ("write_only", "as_bytes_mut"),
+                        (true, false) => ("read_only", "as_bytes"),
+                        (false, false) => panic!("should have been caught above"),
+                    };
+                    let ctor =
+                        syn::Ident::new(ctor, proc_macro2::Span::call_site());
+                    let asbytes =
+                        syn::Ident::new(asbytes, proc_macro2::Span::call_site());
+                    let argname = leasename.arg_prefixed();
+                    quote! {
+                        userlib::Lease::#ctor(zerocopy::AsBytes::#asbytes(#argname))
+                    }
+                });
                 quote! {
                     let task = self.current_id.get();
                     let (rc, len) = sys_send(
@@ -387,6 +388,10 @@ impl Generator {
                 match &op.reply {
                     syntax::Reply::Simple(t) => {
                         let decode = gen_decode(t);
+                        let count = match counters {
+                            Some(ref ctrs) => ctrs.count_simple_op(name),
+                            None => quote! {},
+                        };
                         let ret = match &t.recv {
                             syntax::RecvStrategy::FromBytes
                                 if t.ty.is_bool() =>
@@ -411,6 +416,7 @@ impl Generator {
                         quote! {
                             if rc != 0 { panic!(); }
                             #decode
+                            #count
                             #ret
                         }
                     }
@@ -450,13 +456,26 @@ impl Generator {
                                         }
                                     }
                                 };
+                                let count = match counters {
+                                    Some(ref ctrs) => ctrs
+                                        .count_result(name, quote! {Err(err)}),
+                                    None => quote! {},
+                                };
                                 quote! {
                                     #check_server_death
-                                    return Err(<#ty as core::convert::TryFrom<u32>>::try_from(rc)
-                                        .unwrap_lite());
+                                    let err = <#ty as core::convert::TryFrom<u32>>::try_from(rc)
+                                        .unwrap_lite();
+                                    #count
+                                    return Err(err);
                                 }
                             }
                             syntax::Error::Complex(ty) => {
+                                let count = match counters {
+                                    Some(ref ctrs) => {
+                                        ctrs.count_result(name, quote! {Err(v)})
+                                    }
+                                    None => quote! {},
+                                };
                                 match op.encoding {
                                     syntax::Encoding::Hubpack => {
                                         let check_server_death = if op
@@ -469,29 +488,40 @@ impl Generator {
                                             quote! {
                                                 if let Some(g) = userlib::extract_new_generation(rc) {
                                                     self.current_id.set(userlib::TaskId::for_index_and_gen(task.index(), g));
-                                                    return Err(#ty::from(idol_runtime::ServerDeath));
+                                                    let v = #ty::from(idol_runtime::ServerDeath);
+                                                    #count
+                                                    return Err(v);
                                                 }
                                             }
                                         };
                                         quote! {
                                             #check_server_death
                                             let (v, _): (#ty, _) = hubpack::deserialize(&reply[..len]).unwrap_lite();
+                                            #count
                                             return Err(v);
                                         }
                                     }
                                     e => {
                                         panic!(
-                                    "Complex error types not supported for \
-                                    {e:?} encoding, sorry"
-                                );
+                                        "Complex error types not supported for \
+                                        {e:?} encoding, sorry"
+                                    );
                                     }
                                 }
                             }
                             syntax::Error::ServerDeath => {
                                 assert!(!op.idempotent, "idempotent operations should not indicate server death");
+                                let count = match counters {
+                                    Some(ref counters) => counters.count_result(
+                                        name,
+                                        quote! {Err(idol_runtime::ServerDeath)},
+                                    ),
+                                    None => quote! {},
+                                };
                                 quote! {
                                     if let Some(g) = userlib::extract_new_generation(rc) {
                                         self.current_id.set(userlib::TaskId::for_index_and_gen(task.index(), g));
+                                        #count
                                         return Err(idol_runtime::ServerDeath);
                                     } else {
                                         panic!()
@@ -499,9 +529,16 @@ impl Generator {
                                 }
                             }
                         };
+                        let count_ok = match counters {
+                            Some(ref counters) => {
+                                counters.count_result(name, quote! {Ok(())})
+                            }
+                            None => quote! {},
+                        };
                         quote! {
                             if rc == 0 {
                                 #decode
+                                #count_ok
                                 #ret_ok
                             } else {
                                 #ret_err
@@ -545,6 +582,11 @@ impl Generator {
                 }
             })
         }
+        let counters = counters
+            .as_ref()
+            .map(|ctrs| ctrs.generate_defs())
+            .unwrap_or_default();
+
         Ok(quote! {
             #[allow(unused_imports)]
             use userlib::UnwrapLite;
@@ -560,6 +602,8 @@ impl Generator {
                     Self { current_id: core::cell::Cell::new(x) }
                 }
             }
+
+            #counters
 
             #[allow(clippy::let_unit_value,
                     clippy::collapsible_else_if,

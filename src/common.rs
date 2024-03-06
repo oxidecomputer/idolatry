@@ -27,6 +27,7 @@ pub fn generate_op_enum(iface: &syntax::Interface) -> proc_macro2::TokenStream {
         pub enum #name {
             #(#variants)*
         }
+
     }
 }
 

@@ -17,6 +17,7 @@ use zerocopy::{AsBytes, FromBytes};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
+#[cfg_attr(feature = "counters", derive(counters::Count))]
 pub enum ClientError {
     UnknownOperation = 0xFFFF_FE00,
     BadMessageSize = 0xFFFF_FE01,
@@ -46,6 +47,19 @@ pub trait IHaveConsideredServerDeathWithThisErrorType {}
 /// server-side API infallible but returns `Result<T, ServerDeath>` to the
 /// client.
 pub struct ServerDeath;
+
+#[cfg(feature = "counters")]
+impl counters::Count for ServerDeath {
+    type Counters = core::sync::atomic::AtomicU32;
+    const NEW_COUNTERS: Self::Counters = core::sync::atomic::AtomicU32::new(0);
+    fn count(&self, count: &Self::Counters) {
+        counters::armv6m_atomic_hack::AtomicU32Ext::fetch_add(
+            count,
+            1,
+            core::sync::atomic::Ordering::Relaxed,
+        );
+    }
+}
 
 impl ClientError {
     pub fn into_fault(self) -> Option<ReplyFaultReason> {
@@ -82,9 +96,10 @@ impl From<ClientError> for u32 {
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
+#[cfg_attr(feature = "counters", derive(counters::Count))]
 pub enum RequestError<E> {
-    Runtime(E),
-    Fail(ClientError),
+    Runtime(#[cfg_attr(feature = "counters", count(children))] E),
+    Fail(#[cfg_attr(feature = "counters", count(children))] ClientError),
 }
 
 impl<E> RequestError<E> {
