@@ -86,12 +86,12 @@ impl Generator {
                 }
                 match &op.reply {
                     syntax::Reply::Result { err, .. }
-                        if matches!(err, syntax::Error::ServerDeath) =>
+                        if matches!(err, syntax::Error::ServerDeath) => 
                     {
                         return Err(
-                        format!("idempotent operations should not indicate server death: {name}")
-                            .into(),
-                    );
+                            format!("idempotent operations should not indicate server death: {name}")
+                                .into(),
+                        );
                     }
                     _ => (),
                 }
