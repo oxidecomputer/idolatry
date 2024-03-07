@@ -6,6 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-counters = { git = "https://github.com/oxidecomputer/hubris", optional = true, branch = "eliza/auto-count" }
+counters = { git = "https://github.com/oxidecomputer/hubris", optional = true }
 userlib = {git = "https://github.com/oxidecomputer/hubris"}
 zerocopy = "0.6.1"
