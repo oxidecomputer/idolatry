@@ -13,20 +13,20 @@ pub use crate::counters::CounterSettings;
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[must_use]
 pub struct Generator {
-    pub(crate) counters: Option<CounterSettings>,
+    pub(crate) counters: CounterSettings,
     pub(crate) fmt: bool,
 }
 
 impl Generator {
     pub fn new() -> Self {
         Self {
-            counters: None,
+            counters: Default::default(),
             fmt: true,
         }
     }
 
-    /// If [`Some`], configures how event counters will be generated for IPC
-    /// operations. If [`None`], no counters will be generated.
+    /// Overrides how how event counters will be generated for IPC
+    /// operations.
     ///
     /// By default, counters are not enabled.
     ///
@@ -42,12 +42,15 @@ impl Generator {
     /// ```
     ///
     ///
-    /// Disabling counters (this is equivalent to `Generator::default()`):
+    /// Disabling counters:
     ///
     /// ```
+    /// let counters = idol::CounterSettings::default()
+    ///     .with_client_counters(false)
+    ///     .with_server_counters(false);
     /// # let _ =
     /// idol::Generator::new()
-    ///     .with_counters(None)
+    ///     .with_counters(counters)
     /// # ;
     /// ```
     ///
@@ -62,11 +65,7 @@ impl Generator {
     ///     .with_counters(counters)
     /// # ;
     /// ```
-    pub fn with_counters(
-        self,
-        counters: impl Into<Option<CounterSettings>>,
-    ) -> Self {
-        let counters = counters.into();
+    pub fn with_counters(self, counters: CounterSettings) -> Self {
         Self { counters, ..self }
     }
 
