@@ -5,8 +5,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     std::io::stdin().read_to_string(&mut text)?;
 
     let iface: idol::syntax::Interface = ron::de::from_str(&text)?;
-
-    let tokens = idol::Generator::default()
+    let tokens = idol::Generator::new()
+        .with_counters(
+            idol::CounterSettings::default().combine_client_errors(true),
+        )
         .generate_restricted_server_support(
             &iface,
             idol::server::ServerStyle::InOrder,
