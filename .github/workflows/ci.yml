@@ -24,8 +24,8 @@ env:
   RUSTUP_MAX_RETRIES: 10
 
 jobs:
-  check:
-    name: Check
+  check-idol:
+    name: Check idol codegen
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -45,7 +45,34 @@ jobs:
         toolchain: ${{ matrix.rust }}
         override: true
     - uses: Swatinem/rust-cache@v1
-    - run: cargo check --all
+    - run: cargo check -p idol
+
+  check-runtime:
+    name: Check idol-runtime
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+        # the current pinned Rust toolchain in the Hubris repo:
+        # https://github.com/oxidecomputer/hubris/blob/master/rust-toolchain.toml
+        #
+        # when updating Hubris' Rust toolchain, make sure to update this, too!
+        # TODO(eliza): it would be nice to determine this automatically...
+        - "nightly-2022-11-01"
+        target:
+        - "thumbv6m-none-eabi"
+        - "thumbv7em-none-eabihf"
+        - "thumbv8m.main-none-eabihf"
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: ${{ matrix.rust }}
+        target: ${{ matrix.target }}
+        override: true
+    - uses: Swatinem/rust-cache@v1
+    - run: cargo check -p idol-runtime --target ${{ matrix.target }}
 
   rustfmt:
     name: rustfmt
