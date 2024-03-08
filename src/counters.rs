@@ -15,8 +15,8 @@ impl Default for CounterSettings {
     fn default() -> Self {
         Self {
             combine_client_errors: false,
-            client_counters: cfg!(feature = "client-counters"),
-            server_counters: cfg!(feature = "server-counters"),
+            client_counters: !cfg!(feature = "no-counters"),
+            server_counters: !cfg!(feature = "no-counters"),
         }
     }
 }
