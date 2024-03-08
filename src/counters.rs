@@ -3,13 +3,47 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 /// Configures how event counters are generated.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[must_use]
 pub struct CounterSettings {
     pub(crate) combine_client_errors: bool,
+    client_counters: bool,
+    server_counters: bool,
+}
+
+impl Default for CounterSettings {
+    fn default() -> Self {
+        Self {
+            combine_client_errors: false,
+            client_counters: cfg!(feature = "client-counters"),
+            server_counters: cfg!(feature = "server-counters"),
+        }
+    }
 }
 
 impl CounterSettings {
+    /// Explicitly enable or disable generation of server-side IPC counters.
+    ///
+    /// This overrides the default determined based on whether the
+    /// "server-counters" feature flag is set.
+    pub fn with_server_counters(self, server_counters: bool) -> Self {
+        Self {
+            server_counters,
+            ..self
+        }
+    }
+
+    /// Explicitly enable or disable generation of server-side IPC counters.
+    ///
+    /// This overrides the default determined based on whether the
+    /// "server-counters" feature flag is set.
+    pub fn with_client_counters(self, client_counters: bool) -> Self {
+        Self {
+            client_counters,
+            ..self
+        }
+    }
+
     /// If `true`, `idol_runtime::ClientError` variants will be counted
     /// globally for the entire server, rather than separately for each IPC
     /// operation.
@@ -19,14 +53,17 @@ impl CounterSettings {
     /// counter is 4 bytes, so 28 bytes of counters are generated to count
     /// `ClientError`s.
     pub fn combine_client_errors(self, combine_client_errors: bool) -> Self {
-        #[allow(clippy::needless_update)] // may add fields in the future
         Self {
             combine_client_errors,
             ..self
         }
     }
 
-    pub(crate) fn server(self, iface: &syntax::Interface) -> Counters {
+    pub(crate) fn server(self, iface: &syntax::Interface) -> Option<Counters> {
+        if !self.server_counters {
+            return None;
+        }
+
         let mut needs_client_error_variant = false;
         let mut variants = iface.ops.iter().map(|(opname, op)| match &op.reply {
                 syntax::Reply::Simple(_) => quote! { #opname },
@@ -59,10 +96,13 @@ impl CounterSettings {
                 ClientError(#[count(children)] idol_runtime::ClientError)
             })
         };
-        Counters::new(self, iface, variants, true)
+        Some(Counters::new(self, iface, variants, true))
     }
 
-    pub(crate) fn client(self, iface: &syntax::Interface) -> Counters {
+    pub(crate) fn client(self, iface: &syntax::Interface) -> Option<Counters> {
+        if !self.client_counters {
+            return None;
+        }
         let variants = iface.ops.iter().map(|(opname, op)| match &op.reply {
             syntax::Reply::Simple(_) => quote! { #opname },
             syntax::Reply::Result { err, .. } => {

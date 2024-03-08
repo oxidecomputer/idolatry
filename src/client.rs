@@ -71,7 +71,7 @@ impl Generator {
     ) -> Result<TokenStream, Box<dyn std::error::Error + Send + Sync>> {
         let mut ops = Vec::with_capacity(iface.ops.len());
         let iface_name = &iface.name;
-        let counters = self.counters.clone().map(|ctrs| ctrs.client(iface));
+        let counters = self.counters.client(iface);
         for (idx, (name, op)) in iface.ops.iter().enumerate() {
             // Let's do some checks
             if op.idempotent {
@@ -87,7 +87,7 @@ impl Generator {
                 }
                 match &op.reply {
                     syntax::Reply::Result { err, .. }
-                        if matches!(err, syntax::Error::ServerDeath) => 
+                        if matches!(err, syntax::Error::ServerDeath) =>
                     {
                         return Err(
                             format!("idempotent operations should not indicate server death: {name}")

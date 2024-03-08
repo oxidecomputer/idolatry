@@ -412,7 +412,7 @@ impl Generator {
         let iface_name = &iface.name;
         let trt = format_ident!("InOrder{iface_name}Impl");
         let trait_def = generate_trait_def(iface, &trt);
-        let counters = self.counters.clone().map(|ctrs| ctrs.server(iface));
+        let counters = self.counters.server(iface);
 
         let enum_name = iface.name.as_op_enum();
         let op_cases = iface.ops.iter().map(|(opname, op)| {
