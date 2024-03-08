@@ -59,7 +59,7 @@ impl CounterSettings {
         }
     }
 
-    pub(crate) fn server(self, iface: &syntax::Interface) -> Option<Counters> {
+    pub(crate) fn server(&self, iface: &syntax::Interface) -> Option<Counters> {
         if !self.server_counters {
             return None;
         }
@@ -96,10 +96,10 @@ impl CounterSettings {
                 ClientError(#[count(children)] idol_runtime::ClientError)
             })
         };
-        Some(Counters::new(self, iface, variants, true))
+        Some(Counters::new(self.clone(), iface, variants, true))
     }
 
-    pub(crate) fn client(self, iface: &syntax::Interface) -> Option<Counters> {
+    pub(crate) fn client(&self, iface: &syntax::Interface) -> Option<Counters> {
         if !self.client_counters {
             return None;
         }
@@ -119,7 +119,7 @@ impl CounterSettings {
                 }
             }
         });
-        Counters::new(self, iface, variants, false)
+        Some(Counters::new(self.clone(), iface, variants, false))
     }
 }
 
