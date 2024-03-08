@@ -107,8 +107,10 @@ impl Generator {
         Ok(tokens)
     }
 
-
-    pub fn generate_server_constants(&self, iface: &syntax::Interface) -> TokenStream {
+    pub fn generate_server_constants(
+        &self,
+        iface: &syntax::Interface,
+    ) -> TokenStream {
         // Generate message sizing constants for each message.
         let mut msgsize_names = Vec::with_capacity(iface.ops.len());
         let consts = iface.ops.iter().map(|(name, op)| {
@@ -202,7 +204,10 @@ impl Generator {
         }
     }
 
-    pub fn generate_server_conversions(&self, iface: &syntax::Interface) -> TokenStream {
+    pub fn generate_server_conversions(
+        &self,
+        iface: &syntax::Interface,
+    ) -> TokenStream {
         let conversions = iface.ops.iter().map(|(name, op)| {
             // Define args struct.
                 let attrs = match op.encoding {
@@ -296,7 +301,7 @@ impl Generator {
                 } else {
                     quote! {}
                 };
-    
+
                 let read_fn = {
                     let read_fn = format_ident!("read_{}_msg", name);
                     match op.encoding {
@@ -361,7 +366,10 @@ impl Generator {
         }
     }
 
-    pub fn generate_server_op_impl(&self, iface: &syntax::Interface) -> TokenStream {
+    pub fn generate_server_op_impl(
+        &self,
+        iface: &syntax::Interface,
+    ) -> TokenStream {
         let op_enum = iface.name.as_op_enum();
         let max_reply_size_cases = iface.ops.keys().map(|opname| {
             let reply_size = opname.as_reply_size();
@@ -743,7 +751,7 @@ fn generate_trait_def(
                 quote! { Result<#ok, idol_runtime::RequestError<#err_ty>> }
             },
             syntax::Reply::Simple(t) => {
-                quote! { 
+                quote! {
                     Result<#t, idol_runtime::RequestError<core::convert::Infallible>>
                 }
             },
