@@ -8,6 +8,8 @@
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
 use core::ops::Range;
+use core::sync::atomic::{AtomicU32, Ordering};
+use counters::{armv6m_atomic_hack::AtomicU32Ext, Count};
 use userlib::{
     sys_borrow_info, sys_borrow_read, sys_borrow_write, sys_recv, sys_reply,
     sys_reply_fault, FromPrimitive, LeaseAttributes, RecvMessage,
@@ -15,9 +17,8 @@ use userlib::{
 };
 use zerocopy::{AsBytes, FromBytes};
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Count)]
 #[repr(u32)]
-#[cfg_attr(feature = "counters", derive(counters::Count))]
 pub enum ClientError {
     UnknownOperation = 0xFFFF_FE00,
     BadMessageSize = 0xFFFF_FE01,
@@ -48,16 +49,11 @@ pub trait IHaveConsideredServerDeathWithThisErrorType {}
 /// client.
 pub struct ServerDeath;
 
-#[cfg(feature = "counters")]
-impl counters::Count for ServerDeath {
-    type Counters = core::sync::atomic::AtomicU32;
-    const NEW_COUNTERS: Self::Counters = core::sync::atomic::AtomicU32::new(0);
+impl Count for ServerDeath {
+    type Counters = AtomicU32;
+    const NEW_COUNTERS: Self::Counters = AtomicU32::new(0);
     fn count(&self, count: &Self::Counters) {
-        counters::armv6m_atomic_hack::AtomicU32Ext::fetch_add(
-            count,
-            1,
-            core::sync::atomic::Ordering::Relaxed,
-        );
+        AtomicU32Ext::fetch_add(count, 1, Ordering::Relaxed);
     }
 }
 
@@ -94,12 +90,11 @@ impl From<ClientError> for u32 {
     }
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Count)]
 #[repr(u32)]
-#[cfg_attr(feature = "counters", derive(counters::Count))]
 pub enum RequestError<E> {
-    Runtime(#[cfg_attr(feature = "counters", count(children))] E),
-    Fail(#[cfg_attr(feature = "counters", count(children))] ClientError),
+    Runtime(#[ount(children)] E),
+    Fail(#[count(children)] ClientError),
 }
 
 impl<E> RequestError<E> {
