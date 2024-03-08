@@ -93,7 +93,7 @@ impl From<ClientError> for u32 {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Count)]
 #[repr(u32)]
 pub enum RequestError<E> {
-    Runtime(#[ount(children)] E),
+    Runtime(#[count(children)] E),
     Fail(#[count(children)] ClientError),
 }
 
