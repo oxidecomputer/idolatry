@@ -4,8 +4,7 @@ version = "0.4.0"
 edition = "2021"
 
 [features]
-client-counters = []
-server-counters = []
+no-counters = []
 
 [dependencies]
 ron = { version = "0.8", default-features = false }
