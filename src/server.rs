@@ -95,7 +95,7 @@ impl Generator {
 
         tokens.extend(self.generate_server_constants(iface));
         tokens.extend(self.generate_server_conversions(iface));
-        tokens.extend(common::generate_op_enum(iface));
+        tokens.extend(self.generate_op_enum(iface));
         tokens.extend(self.generate_server_op_impl(iface));
 
         tokens.extend(match style {

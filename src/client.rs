@@ -58,7 +58,7 @@ impl Generator {
         iface: &syntax::Interface,
         mut out: impl std::io::Write,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut tokens = common::generate_op_enum(iface);
+        let mut tokens = self.generate_op_enum(iface);
         tokens.extend(self.client_stub_tokens(iface)?);
         let formatted = common::fmt_tokens(tokens)?;
         write!(out, "{formatted}")?;
