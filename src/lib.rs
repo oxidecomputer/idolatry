@@ -15,12 +15,14 @@ pub use crate::counters::CounterSettings;
 pub struct Generator {
     pub(crate) counters: CounterSettings,
     pub(crate) fmt: bool,
+    pub(crate) extra_op_enum_derives: Vec<syn::Path>,
 }
 
 impl Generator {
     pub fn new() -> Self {
         Self {
             counters: Default::default(),
+            extra_op_enum_derives: Vec::new(),
             fmt: true,
         }
     }
@@ -72,6 +74,34 @@ impl Generator {
     /// If `true`, generated code will be formatted with `prettyplease`.
     pub fn with_fmt(self, fmt: bool) -> Self {
         Self { fmt, ..self }
+    }
+
+    /// Add additional traits to derive for the generated operation enum.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # let _ =
+    /// idol::Generator::new().with_op_enum_derives(&[
+    ///     "serde::Serialize",
+    ///    "serde::Deserialize",
+    /// ])
+    /// #;
+    /// ```
+    pub fn with_op_enum_derives<T>(
+        self,
+        derives: impl IntoIterator<Item = T>,
+    ) -> Result<Self, syn::Error>
+    where
+        T: AsRef<str>,
+    {
+        Ok(Self {
+            extra_op_enum_derives: derives
+                .into_iter()
+                .map(|s| syn::parse_str(s.as_ref()))
+                .collect::<Result<_, _>>()?,
+            ..self
+        })
     }
 }
 
