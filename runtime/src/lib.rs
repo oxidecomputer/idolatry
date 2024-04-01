@@ -233,10 +233,20 @@ pub fn dispatch<S: NotificationHandler, Op: ServerOp>(
 {
     let mut server = (core::marker::PhantomData, server);
     let mask = server.1.current_notification_mask();
-    let rm = match sys_recv(buffer, mask, server.recv_source()) {
+    let recv_source = server.recv_source();
+    let rm = match sys_recv(buffer, mask, recv_source) {
         Ok(rm) => rm,
         Err(_) => {
-            server.closed_recv_fail();
+            // This is subtle. The most common implementation of
+            // closed_recv_fail is a panic; this is the default impl. But a
+            // closed recv can only _fail_ if the server attempts one, and the
+            // default impl never attempts one.
+            //
+            // This conditional makes it clear that the kernel won't return
+            // something we'd need to panic about, if we don't ask it to.
+            if recv_source.is_some() {
+                server.closed_recv_fail();
+            }
             return;
         }
     };
@@ -257,7 +267,12 @@ pub fn dispatch<S: NotificationHandler, Op: ServerOp>(
         return;
     }
 
-    let incoming = &buffer[..rm.message_len];
+    // If the client sent a really long message, the kernel will give us its
+    // honest length here, and we are responsible for faulting the client.
+    let Some(incoming) = buffer.get(..rm.message_len) else {
+        sys_reply_fault(rm.sender, ReplyFaultReason::BadMessageSize);
+        return;
+    };
 
     let op = match Op::from_u32(rm.operation) {
         Some(op) => op,
@@ -267,10 +282,6 @@ pub fn dispatch<S: NotificationHandler, Op: ServerOp>(
         }
     };
 
-    if rm.message_len > buffer.len() {
-        sys_reply_fault(rm.sender, ReplyFaultReason::BadMessageSize);
-        return;
-    }
     if rm.response_capacity < op.max_reply_size() {
         sys_reply_fault(rm.sender, ReplyFaultReason::ReplyBufferTooSmall);
         return;
