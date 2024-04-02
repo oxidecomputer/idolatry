@@ -413,8 +413,11 @@ impl Generator {
                                 quote! { return <#t as userlib::FromPrimitive>::#from_prim(v).unwrap_lite(); }
                             }
                         };
+                        // We're going to assume rc is zero at this point since
+                        // we've already extracted the server death case. This
+                        // avoids an otherwise-hard-to-avoid client panic site
+                        // that doesn't happen in practice.
                         quote! {
-                            if rc != 0 { panic!(); }
                             #decode
                             #count
                             #ret
