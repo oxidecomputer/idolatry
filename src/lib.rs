@@ -86,7 +86,7 @@ impl Generator {
     ///     "serde::Serialize",
     ///    "serde::Deserialize",
     /// ])
-    /// #;
+    /// # ;
     /// ```
     pub fn with_op_enum_derives<T>(
         self,
