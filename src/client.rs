@@ -387,7 +387,13 @@ impl Generator {
 
                 match &op.reply {
                     syntax::Reply::Simple(t) => {
-                        let decode = gen_decode(t);
+                        let mut decode = gen_decode(t);
+                        if let syn::Type::Tuple(tt) = &t.ty.0 {
+                            if tt.elems.is_empty() {
+                                // Override for the `Simple("()")` case.
+                                decode = quote::quote! { let v = (); };
+                            }
+                        }
                         let count = match counters {
                             Some(ref ctrs) => ctrs.count_simple_op(name),
                             None => quote! {},
