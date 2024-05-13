@@ -603,9 +603,9 @@ mod tests {
         "#;
 
         let err = Interface::from_str(HAS_DUPES).unwrap_err();
-        assert!(
-            err.to_string().starts_with("invalid entry: found duplicate key")
-        );
+        assert!(err
+            .to_string()
+            .starts_with("invalid entry: found duplicate key"));
     }
 
     #[test]
@@ -630,9 +630,9 @@ mod tests {
         "#;
 
         let err = Interface::from_str(HAS_DUPES).unwrap_err();
-        assert!(
-            err.to_string().starts_with("invalid entry: found duplicate key")
-        );
+        assert!(err
+            .to_string()
+            .starts_with("invalid entry: found duplicate key"));
     }
 
     #[test]
@@ -660,8 +660,8 @@ mod tests {
         "#;
 
         let err = Interface::from_str(HAS_DUPES).unwrap_err();
-        assert!(
-            err.to_string().starts_with("invalid entry: found duplicate key")
-        );
+        assert!(err
+            .to_string()
+            .starts_with("invalid entry: found duplicate key"));
     }
 }
