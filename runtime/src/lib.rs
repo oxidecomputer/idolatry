@@ -31,6 +31,19 @@ pub enum ClientError {
     WentAway = 0xFFFF_FE03,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Count)]
+pub enum LeaseReadErr {
+    Rc(NonZeroU32),
+    BadLen(u32),
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Count)]
+pub enum LeaseWriteErr {
+    Rc(NonZeroU32),
+    BadLen(u32),
+    Eof,
+}
+
 /// Marker trait indicating a simple error type is able to represent server
 /// death.
 ///
@@ -592,7 +605,7 @@ impl<A: AttributeRead, T: Sized + Copy + FromBytes + AsBytes> Leased<A, [T]> {
         &self,
         range: Range<usize>,
         dest: &mut [T],
-    ) -> Result<(), ()> {
+    ) -> Result<(), LeaseReadErr> {
         let offset = core::mem::size_of::<T>()
             .checked_mul(range.start)
             .ok_or(())?;
@@ -607,8 +620,10 @@ impl<A: AttributeRead, T: Sized + Copy + FromBytes + AsBytes> Leased<A, [T]> {
             dest.as_bytes_mut(),
         );
 
-        if rc != 0 || len != expected_len {
-            Err(())
+        if let Some(v) = NonZeroU32::new(rc) {
+            Err(LeaseReadErr::Rc(v))
+        } else if len != expected_len {
+            Err(LeaseReadErr::BadLen(len))
         } else {
             Ok(())
         }
@@ -625,11 +640,13 @@ impl<A: AttributeWrite, T: Sized + Copy + AsBytes> Leased<A, T> {
     /// attributes and the time you call `write`, this will return `Err(())`.
     /// Otherwise, it returns `Ok(())`. It's therefore safe to treat an `Err`
     /// return as aborting the request.
-    pub fn write(&self, value: T) -> Result<(), ()> {
+    pub fn write(&self, value: T) -> Result<(), LeaseWriteErr> {
         let (rc, len) =
             sys_borrow_write(self.lender, self.index, 0, value.as_bytes());
-        if rc != 0 || len != core::mem::size_of::<T>() {
-            Err(())
+        if let Some(v) = NonZeroU32::new(rc) {
+            Err(LeaseWriteErr::Rc(v))
+        } else if len != core::mem::size_of::<T>() {
+            Err(LeaseWriteErr::BadLen(len))
         } else {
             Ok(())
         }
@@ -649,12 +666,18 @@ impl<A: AttributeWrite, T: Sized + Copy + AsBytes> Leased<A, [T]> {
     /// attributes and the time you call `write_at`, this will return `Err(())`.
     /// Otherwise, it returns `Ok(())`. It's therefore safe to treat an `Err`
     /// return as aborting the request.
-    pub fn write_at(&self, index: usize, value: T) -> Result<(), ()> {
+    pub fn write_at(
+        &self,
+        index: usize,
+        value: T,
+    ) -> Result<(), LeaseWriteErr> {
         let offset = core::mem::size_of::<T>().checked_mul(index).ok_or(())?;
         let (rc, len) =
             sys_borrow_write(self.lender, self.index, offset, value.as_bytes());
-        if rc != 0 || len != core::mem::size_of::<T>() {
-            Err(())
+        if let Some(v) = NonZeroU32::new(rc) {
+            Err(LeaseWriteErr::Rc(v))
+        } else if len != core::mem::size_of::<T>() {
+            Err(LeaseWriteErr::BadLen(len))
         } else {
             Ok(())
         }
@@ -674,7 +697,7 @@ impl<A: AttributeWrite, T: Sized + Copy + AsBytes> Leased<A, [T]> {
         &self,
         range: Range<usize>,
         src: &[T],
-    ) -> Result<(), ()> {
+    ) -> Result<(), LeaseReadErr> {
         let offset = core::mem::size_of::<T>()
             .checked_mul(range.start)
             .ok_or(())?;
@@ -685,8 +708,10 @@ impl<A: AttributeWrite, T: Sized + Copy + AsBytes> Leased<A, [T]> {
         let (rc, len) =
             sys_borrow_write(self.lender, self.index, offset, src.as_bytes());
 
-        if rc != 0 || len != expected_len {
-            Err(())
+        if let Some(v) = NonZeroU32::new(rc) {
+            Err(LeaseReadErr::Rc(v))
+        } else if len != expected_len {
+            Err(LeaseReadErr::BadLen(len))
         } else {
             Ok(())
         }
@@ -798,7 +823,7 @@ impl<A: AttributeRead, const N: usize> LeaseBufReader<A, N> {
         self.pos == self.lease.len() && self.buf_left == 0
     }
 
-    pub fn refill(&mut self) -> Result<(), ()> {
+    pub fn refill(&mut self) -> Result<(), LeaseReadErr> {
         if self.buf_left == 0 {
             if self.pos == self.lease.len() {
                 // We've hit the end.
@@ -861,9 +886,9 @@ impl<A: AttributeWrite, const N: usize> LeaseBufWriter<A, N> {
         self.pos + self.buf_valid == self.lease.len()
     }
 
-    pub fn write(&mut self, byte: u8) -> Result<(), ()> {
+    pub fn write(&mut self, byte: u8) -> Result<(), LeaseWriteErr> {
         if self.is_eof() {
-            return Err(());
+            return Err(LeaseWriteErr::Eof);
         }
         self.buf[self.buf_valid] = byte;
         self.buf_valid += 1;
@@ -875,7 +900,7 @@ impl<A: AttributeWrite, const N: usize> LeaseBufWriter<A, N> {
         Ok(())
     }
 
-    fn flush(&mut self) -> Result<(), ()> {
+    fn flush(&mut self) -> Result<(), LeaseWriteErr> {
         // Try to flush. If this fails, the client has gone away, so we fail
         // too. However, we zero `buf_valid` either way to maintain our
         // invariant on that field. Since client errors never recover, losing
@@ -942,11 +967,11 @@ pub trait BufWriter<'a> {
 
     /// Writes a single byte to the buffer, incrementing the internal position
     /// and returning `Err(())` if we've reached the end.
-    fn write(&mut self, v: u8) -> Result<(), ()>;
+    fn write(&mut self, v: u8) -> Result<(), LeaseWriteErr>;
 }
 
 impl<'a, const BUFSIZ: usize> BufWriter<'a> for LeaseBufWriter<W, BUFSIZ> {
-    fn write(&mut self, v: u8) -> Result<(), ()> {
+    fn write(&mut self, v: u8) -> Result<(), LeaseWriteErr> {
         LeaseBufWriter::write(self, v)
     }
     fn remaining_size(&self) -> usize {
@@ -955,7 +980,7 @@ impl<'a, const BUFSIZ: usize> BufWriter<'a> for LeaseBufWriter<W, BUFSIZ> {
 }
 
 impl<'a> BufWriter<'a> for &'a mut [u8] {
-    fn write(&mut self, v: u8) -> Result<(), ()> {
+    fn write(&mut self, v: u8) -> Result<(), LeaseWriteErr> {
         // We have to get a little sneaky to work around variance checks,
         // because self is a &'b &'a mut [u8]
         let real = core::mem::replace(self, &mut []);
