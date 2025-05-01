@@ -200,7 +200,7 @@ impl Generator {
                 let attrs = match op.encoding {
                     syntax::Encoding::Zerocopy => {
                         quote! {
-                            #[derive(zerocopy::AsBytes)]
+                            #[derive(zerocopy::IntoBytes, zerocopy::Immutable)]
                             #[repr(C, packed)]
                         }
                     }
@@ -323,7 +323,7 @@ impl Generator {
                 let op_enum_name = iface_name.as_op_enum();
                 let buf = match op.encoding {
                     syntax::Encoding::Zerocopy => {
-                        quote! { zerocopy::AsBytes::as_bytes(&args) }
+                        quote! { zerocopy::IntoBytes::as_bytes(&args) }
                     }
                     syntax::Encoding::Ssmarshal | syntax::Encoding::Hubpack => {
                         quote! { &argsbuf[..arglen] }
@@ -331,8 +331,8 @@ impl Generator {
                 };
                 let leases = op.leases.iter().map(|(leasename, lease)| {
                     let (ctor, asbytes) = match (lease.read, lease.write) {
-                        (true, true) => ("read_write", "as_bytes_mut"),
-                        (false, true) => ("write_only", "as_bytes_mut"),
+                        (true, true) => ("read_write", "as_mut_bytes"),
+                        (false, true) => ("write_only", "as_mut_bytes"),
                         (true, false) => ("read_only", "as_bytes"),
                         (false, false) => panic!("should have been caught above"),
                     };
@@ -342,7 +342,7 @@ impl Generator {
                         syn::Ident::new(asbytes, proc_macro2::Span::call_site());
                     let argname = leasename.arg_prefixed();
                     quote! {
-                        userlib::Lease::#ctor(zerocopy::AsBytes::#asbytes(#argname))
+                        userlib::Lease::#ctor(zerocopy::IntoBytes::#asbytes(#argname))
                     }
                 });
                 quote! {
@@ -372,9 +372,7 @@ impl Generator {
                             struct #reply_ty {
                                 value: #repr_ty,
                             }
-                            let lv = zerocopy::LayoutVerified::<_, #reply_ty>::new_unaligned(&reply[..])
-                                .unwrap_lite();
-                            let v: #repr_ty = lv.value;
+                            let v: #repr_ty = zerocopy::FromBytes::read_from_bytes(&reply[..]).unwrap_lite();
                         }
                     }
                     syntax::Encoding::Ssmarshal => quote! {

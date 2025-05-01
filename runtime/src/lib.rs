@@ -15,7 +15,7 @@ use userlib::{
     sys_reply_fault, FromPrimitive, LeaseAttributes, RecvMessage,
     ReplyFaultReason, TaskId,
 };
-use zerocopy::{AsBytes, FromBytes};
+use zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Count)]
 #[repr(u32)]
@@ -539,7 +539,11 @@ impl<T> Leased<W, [T]> {
 /// These functions are available on any readable lease (that is, read-only or
 /// read-write) where the content type `T` is `Sized` and can be moved around by
 /// naive mem-copy.
-impl<A: AttributeRead, T: Sized + Copy + FromBytes + AsBytes> Leased<A, T> {
+impl<A, T> Leased<A, T>
+where
+    A: AttributeRead,
+    T: Sized + Copy + FromZeros + FromBytes + IntoBytes,
+{
     /// Reads the leased value by copy.
     ///
     /// If the lending task has been restarted between the time we checked lease
@@ -549,7 +553,7 @@ impl<A: AttributeRead, T: Sized + Copy + FromBytes + AsBytes> Leased<A, T> {
     pub fn read(&self) -> Option<T> {
         let mut temp = T::new_zeroed();
         let (rc, len) =
-            sys_borrow_read(self.lender, self.index, 0, temp.as_bytes_mut());
+            sys_borrow_read(self.lender, self.index, 0, temp.as_mut_bytes());
         if rc != 0 || len != core::mem::size_of::<T>() {
             None
         } else {
@@ -561,7 +565,11 @@ impl<A: AttributeRead, T: Sized + Copy + FromBytes + AsBytes> Leased<A, T> {
 /// These functions are available on any readable leased slice (that is,
 /// read-only or read-write) where the element type `T` is `Sized` and can be
 /// moved around by naive mem-copy.
-impl<A: AttributeRead, T: Sized + Copy + FromBytes + AsBytes> Leased<A, [T]> {
+impl<A, T> Leased<A, [T]>
+where
+    A: AttributeRead,
+    T: Sized + Copy + FromZeros + FromBytes + IntoBytes,
+{
     /// Reads a single element of the leased slice by copy.
     ///
     /// Like indexing a native slice, `index` must be less than `self.len()`, or
@@ -580,7 +588,7 @@ impl<A: AttributeRead, T: Sized + Copy + FromBytes + AsBytes> Leased<A, [T]> {
             self.lender,
             self.index,
             offset,
-            temp.as_bytes_mut(),
+            temp.as_mut_bytes(),
         );
         if rc != 0 || len != core::mem::size_of::<T>() {
             None
@@ -615,7 +623,7 @@ impl<A: AttributeRead, T: Sized + Copy + FromBytes + AsBytes> Leased<A, [T]> {
             self.lender,
             self.index,
             offset,
-            dest.as_bytes_mut(),
+            dest.as_mut_bytes(),
         );
 
         if rc != 0 || len != expected_len {
@@ -629,7 +637,11 @@ impl<A: AttributeRead, T: Sized + Copy + FromBytes + AsBytes> Leased<A, [T]> {
 /// These functions are available on any writable lease (that is, write-only or
 /// read-write) where the content type `T` is `Sized` and can be moved around by
 /// naive mem-copy.
-impl<A: AttributeWrite, T: Sized + Copy + AsBytes> Leased<A, T> {
+impl<A, T> Leased<A, T>
+where
+    A: AttributeWrite,
+    T: Sized + Copy + IntoBytes + Immutable,
+{
     /// Writes the leased value by copy.
     ///
     /// If the lending task has been restarted between the time we checked lease
@@ -650,7 +662,11 @@ impl<A: AttributeWrite, T: Sized + Copy + AsBytes> Leased<A, T> {
 /// These functions are available on any writable leased slice (that is,
 /// write-only or read-write) where the element type `T` is `Sized` and can be
 /// moved around by naive mem-copy.
-impl<A: AttributeWrite, T: Sized + Copy + AsBytes> Leased<A, [T]> {
+impl<A, T> Leased<A, [T]>
+where
+    A: AttributeWrite,
+    T: Sized + Copy + IntoBytes + Immutable,
+{
     /// Writes a single element of the leased slice by copy.
     ///
     /// Like indexing a native slice, `index` must be less than `self.len()`, or
