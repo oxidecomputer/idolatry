@@ -275,11 +275,11 @@ pub struct Lease {
     #[serde(rename = "type")]
     pub ty: Ty,
     /// The server will be able to read from this lease. The type being leased
-    /// must implement `zerocopy::AsBytes`.
+    /// must implement `idol_runtime::zerocopy::AsBytes`.
     #[serde(default)]
     pub read: bool,
     /// The server will be able to write to this lease. The type being leased
-    /// must implement both `zerocopy::AsBytes` and `zerocopy::FromBytes`.
+    /// must implement both `idol_runtime::zerocopy::AsBytes` and `idol_runtime::zerocopy::FromBytes`.
     #[serde(default)]
     pub write: bool,
     /// The server cannot accept leases longer than this.
@@ -538,7 +538,7 @@ impl quote::ToTokens for Error {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RecvStrategy {
     /// The received bytes should be directly reinterpreted as the type using
-    /// `zerocopy::FromBytes`.
+    /// `idol_runtime::zerocopy::FromBytes`.
     FromBytes,
     /// The received bytes should be the named type, which will then be
     /// converted into the target type using `num_traits::FromPrimitive` (which

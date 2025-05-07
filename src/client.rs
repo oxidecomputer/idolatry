@@ -200,7 +200,7 @@ impl Generator {
                 let attrs = match op.encoding {
                     syntax::Encoding::Zerocopy => {
                         quote! {
-                            #[derive(zerocopy::IntoBytes, zerocopy::Immutable)]
+                            #[derive(idol_runtime::zerocopy::IntoBytes, idol_runtime::zerocopy::Immutable)]
                             #[repr(C, packed)]
                         }
                     }
@@ -323,7 +323,7 @@ impl Generator {
                 let op_enum_name = iface_name.as_op_enum();
                 let buf = match op.encoding {
                     syntax::Encoding::Zerocopy => {
-                        quote! { zerocopy::IntoBytes::as_bytes(&args) }
+                        quote! { idol_runtime::zerocopy::IntoBytes::as_bytes(&args) }
                     }
                     syntax::Encoding::Ssmarshal | syntax::Encoding::Hubpack => {
                         quote! { &argsbuf[..arglen] }
@@ -342,7 +342,7 @@ impl Generator {
                         syn::Ident::new(asbytes, proc_macro2::Span::call_site());
                     let argname = leasename.arg_prefixed();
                     quote! {
-                        userlib::Lease::#ctor(zerocopy::IntoBytes::#asbytes(#argname))
+                        userlib::Lease::#ctor(idol_runtime::zerocopy::IntoBytes::#asbytes(#argname))
                     }
                 });
                 quote! {
@@ -367,12 +367,12 @@ impl Generator {
                         let repr_ty = t.repr_ty();
                         quote! {
                             let _len = len;
-                            #[derive(zerocopy::FromBytes, zerocopy::Unaligned)]
+                            #[derive(idol_runtime::zerocopy::FromBytes, idol_runtime::zerocopy::Unaligned)]
                             #[repr(C, packed)]
                             struct #reply_ty {
                                 value: #repr_ty,
                             }
-                            let v: #repr_ty = zerocopy::FromBytes::read_from_bytes(&reply[..]).unwrap_lite();
+                            let v: #repr_ty = idol_runtime::zerocopy::FromBytes::read_from_bytes(&reply[..]).unwrap_lite();
                         }
                     }
                     syntax::Encoding::Ssmarshal => quote! {

@@ -5,6 +5,8 @@
 //! Most uses of Idol don't need to pull this crate in, but generated servers
 //! often do.
 
+use self::zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes};
+use self::zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes};
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
 use core::ops::Range;
@@ -15,7 +17,13 @@ use userlib::{
     sys_reply_fault, FromPrimitive, LeaseAttributes, RecvMessage,
     ReplyFaultReason, TaskId,
 };
-use zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes};
+
+/// Re-export of `zerocopy` and `zerocopy-derive` so that generated code need
+/// not depend in imports in the client/server crate.
+pub mod zerocopy {
+    pub use zerocopy::*;
+    pub use zerocopy_derive::*;
+}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Count)]
 #[repr(u32)]
