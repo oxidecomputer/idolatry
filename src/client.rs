@@ -200,7 +200,10 @@ impl Generator {
                 let attrs = match op.encoding {
                     syntax::Encoding::Zerocopy => {
                         quote! {
-                            #[derive(idol_runtime::zerocopy::IntoBytes, idol_runtime::zerocopy::Immutable)]
+                            #[derive(
+                                idol_runtime::zerocopy_derive::IntoBytes,
+                                idol_runtime::zerocopy_derive::Immutable,
+                            )]
                             #[repr(C, packed)]
                         }
                     }
@@ -367,7 +370,10 @@ impl Generator {
                         let repr_ty = t.repr_ty();
                         quote! {
                             let _len = len;
-                            #[derive(idol_runtime::zerocopy::FromBytes, idol_runtime::zerocopy::Unaligned)]
+                            #[derive(
+                                idol_runtime::zerocopy_derive::FromBytes,
+                                idol_runtime::zerocopy_derive::Unaligned,
+                            )]
                             #[repr(C, packed)]
                             struct #reply_ty {
                                 value: #repr_ty,

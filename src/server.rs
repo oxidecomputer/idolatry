@@ -216,10 +216,10 @@ impl Generator {
                         #[derive(
                             Copy,
                             Clone,
-                            idol_runtime::zerocopy::FromBytes,
-                            idol_runtime::zerocopy::KnownLayout,
-                            idol_runtime::zerocopy::Immutable,
-                            idol_runtime::zerocopy::Unaligned,
+                            idol_runtime::zerocopy_derive::FromBytes,
+                            idol_runtime::zerocopy_derive::KnownLayout,
+                            idol_runtime::zerocopy_derive::Immutable,
+                            idol_runtime::zerocopy_derive::Unaligned,
                         )]
                     },
                     syntax::Encoding::Ssmarshal => quote! {
