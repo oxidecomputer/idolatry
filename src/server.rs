@@ -216,10 +216,10 @@ impl Generator {
                         #[derive(
                             Copy,
                             Clone,
-                            idol_runtime::zerocopy_derive::FromBytes,
-                            idol_runtime::zerocopy_derive::KnownLayout,
-                            idol_runtime::zerocopy_derive::Immutable,
-                            idol_runtime::zerocopy_derive::Unaligned,
+                            zerocopy_derive::FromBytes,
+                            zerocopy_derive::KnownLayout,
+                            zerocopy_derive::Immutable,
+                            zerocopy_derive::Unaligned,
                         )]
                     },
                     syntax::Encoding::Ssmarshal => quote! {
@@ -314,7 +314,7 @@ impl Generator {
                     match op.encoding {
                         syntax::Encoding::Zerocopy => quote! {
                             pub fn #read_fn(bytes: &[u8]) -> Option<&#struct_name> {
-                                idol_runtime::zerocopy::FromBytes::ref_from_bytes(bytes).ok()
+                                zerocopy::FromBytes::ref_from_bytes(bytes).ok()
                             }
                         },
                         syntax::Encoding::Ssmarshal => quote! {
@@ -557,7 +557,7 @@ impl Generator {
             let reply = {
                 let encode = match op.encoding {
                     syntax::Encoding::Zerocopy => quote! {
-                        userlib::sys_reply(rm.sender, 0, idol_runtime::zerocopy::IntoBytes::as_bytes(&val));
+                        userlib::sys_reply(rm.sender, 0, zerocopy::IntoBytes::as_bytes(&val));
                     },
                     syntax::Encoding::Hubpack | syntax::Encoding::Ssmarshal => {
                         let reply_size = opname.as_reply_size();

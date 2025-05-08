@@ -17,11 +17,6 @@ use userlib::{
 };
 use zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes};
 
-/// Re-export of `zerocopy` and `zerocopy-derive` so that generated code need
-/// not depend in imports in the client/server crate.
-pub use zerocopy;
-pub use zerocopy_derive;
-
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Count)]
 #[repr(u32)]
 pub enum ClientError {

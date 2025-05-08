@@ -9,4 +9,3 @@ edition = "2021"
 counters = { git = "https://github.com/oxidecomputer/hubris" }
 userlib = {git = "https://github.com/oxidecomputer/hubris"}
 zerocopy = "0.8.25"
-zerocopy-derive = "0.8.25"
