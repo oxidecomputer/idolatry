@@ -666,6 +666,9 @@ impl Generator {
             .unwrap_or_default();
 
         Ok(quote! {
+            #[allow(unused_imports)]
+            use idol_runtime::{zerocopy, zerocopy_derive};
+
             #trait_def
 
             #counters

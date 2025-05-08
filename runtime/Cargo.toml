@@ -8,4 +8,5 @@ edition = "2021"
 [dependencies]
 counters = { git = "https://github.com/oxidecomputer/hubris" }
 userlib = {git = "https://github.com/oxidecomputer/hubris"}
-zerocopy = "0.8.25"
+zerocopy = { version = "0.8.25", default-features = false }
+zerocopy-derive = "0.8.25"
