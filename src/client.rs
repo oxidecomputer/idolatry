@@ -603,8 +603,6 @@ impl Generator {
         Ok(quote! {
             #[allow(unused_imports)]
             use userlib::UnwrapLite;
-            #[allow(unused_imports)]
-            use idol_runtime::{zerocopy, zerocopy_derive};
 
             #[derive(Clone, Debug)]
             pub struct #iface_name {
