@@ -377,7 +377,7 @@ impl Generator {
                             value: #repr_ty,
                         }
                         let v: #repr_ty = zerocopy::FromBytes::read_from_bytes(&reply[..]).unwrap_lite();
-
+                    }
                 };
                 let gen_decode = |t: &syntax::AttributedTy| match op.encoding {
                     syntax::Encoding::Zerocopy => {
@@ -491,7 +491,7 @@ impl Generator {
                                         quote! {
                                             let (v, _): (#ty, _) = hubpack::deserialize(&reply[..len]).unwrap_lite();
                                         }
-                                    },
+                                    }
                                     syntax::Encoding::Zerocopy => {
                                         gen_zerocopy_decode(ty, "ERROR")
                                     }
@@ -508,9 +508,7 @@ impl Generator {
                                     }
                                     None => quote! {},
                                 };
-                                let check_server_death = if op
-                                    .idempotent
-                                {
+                                let check_server_death = if op.idempotent {
                                     // Idempotent ops already checked for server death
                                     // above.
                                     quote! {}
