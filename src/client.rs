@@ -363,23 +363,26 @@ impl Generator {
             };
 
             let reply = {
+                let gen_zerocopy_decode = |repr_ty: &syntax::Ty, msg: &str| {
+                    let reply_ty =
+                        quote::format_ident!("{iface_name}_{name}_{msg}");
+                    quote! {
+                        let _len = len;
+                        #[derive(
+                            zerocopy_derive::FromBytes,
+                            zerocopy_derive::Unaligned,
+                        )]
+                        #[repr(C, packed)]
+                        struct #reply_ty {
+                            value: #repr_ty,
+                        }
+                        let v: #repr_ty = zerocopy::FromBytes::read_from_bytes(&reply[..]).unwrap_lite();
+
+                };
                 let gen_decode = |t: &syntax::AttributedTy| match op.encoding {
                     syntax::Encoding::Zerocopy => {
-                        let reply_ty =
-                            quote::format_ident!("{iface_name}_{name}_REPLY");
                         let repr_ty = t.repr_ty();
-                        quote! {
-                            let _len = len;
-                            #[derive(
-                                zerocopy_derive::FromBytes,
-                                zerocopy_derive::Unaligned,
-                            )]
-                            #[repr(C, packed)]
-                            struct #reply_ty {
-                                value: #repr_ty,
-                            }
-                            let v: #repr_ty = zerocopy::FromBytes::read_from_bytes(&reply[..]).unwrap_lite();
-                        }
+                        gen_zerocopy_decode(repr_ty, "REPLY")
                     }
                     syntax::Encoding::Ssmarshal => quote! {
                         let (v, _): (#t, _) = ssmarshal::deserialize(&reply[..len]).unwrap_lite();
@@ -483,43 +486,49 @@ impl Generator {
                                 }
                             }
                             syntax::Error::Complex(ty) => {
+                                let decode_v = match op.encoding {
+                                    syntax::Encoding::Hubpack => {
+                                        quote! {
+                                            let (v, _): (#ty, _) = hubpack::deserialize(&reply[..len]).unwrap_lite();
+                                        }
+                                    },
+                                    syntax::Encoding::Zerocopy => {
+                                        gen_zerocopy_decode(ty, "ERROR")
+                                    }
+                                    e => {
+                                        panic!(
+                                            "Complex error types not supported for \
+                                            {e:?} encoding, sorry"
+                                        );
+                                    }
+                                };
                                 let count = match counters {
                                     Some(ref ctrs) => {
                                         ctrs.count_result(name, quote! {Err(v)})
                                     }
                                     None => quote! {},
                                 };
-                                match op.encoding {
-                                    syntax::Encoding::Hubpack => {
-                                        let check_server_death = if op
-                                            .idempotent
-                                        {
-                                            // Idempotent ops already checked for server death
-                                            // above.
-                                            quote! {}
-                                        } else {
-                                            quote! {
-                                                if let Some(g) = userlib::extract_new_generation(rc) {
-                                                    self.current_id.set(userlib::TaskId::for_index_and_gen(task.index(), g));
-                                                    let v = #ty::from(idol_runtime::ServerDeath);
-                                                    #count
-                                                    return Err(v);
-                                                }
-                                            }
-                                        };
-                                        quote! {
-                                            #check_server_death
-                                            let (v, _): (#ty, _) = hubpack::deserialize(&reply[..len]).unwrap_lite();
+                                let check_server_death = if op
+                                    .idempotent
+                                {
+                                    // Idempotent ops already checked for server death
+                                    // above.
+                                    quote! {}
+                                } else {
+                                    quote! {
+                                        if let Some(g) = userlib::extract_new_generation(rc) {
+                                            self.current_id.set(userlib::TaskId::for_index_and_gen(task.index(), g));
+                                            let v = #ty::from(idol_runtime::ServerDeath);
                                             #count
                                             return Err(v);
                                         }
                                     }
-                                    e => {
-                                        panic!(
-                                        "Complex error types not supported for \
-                                        {e:?} encoding, sorry"
-                                    );
-                                    }
+                                };
+                                quote! {
+                                    #check_server_death
+                                    #decode_v
+                                    #count
+                                    return Err(v);
                                 }
                             }
                             syntax::Error::ServerDeath => {

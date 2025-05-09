@@ -599,8 +599,19 @@ impl Generator {
                             //
                             // So, the fact that this error returns `Ok` is not a
                             // bug.
-                            syntax::Error::Complex (ty) =>  match op.encoding {
-                                syntax::Encoding::Hubpack => quote! {
+                            syntax::Error::Complex (ty) => {
+                                let reply = match op.encoding {
+                                    syntax::Encoding::Hubpack => quote! {
+                                        let mut reply_buf = [0u8; <#ty as hubpack::SerializedSize>::MAX_SIZE];
+                                        let n_reply = hubpack::serialize(&mut reply_buf, &e).map_err(|_| ()).unwrap_lite();
+                                        userlib::sys_reply(rm.sender, 1, &reply_buf[..n_reply]);
+                                    },
+                                    syntax::Encoding::Zerocopy => quote! {
+                                        userlib::sys_reply(rm.sender, 1, zerocopy::IntoBytes::as_bytes(&e));
+                                    }
+                                    encoding => panic!("Complex error types not supported for {encoding:?} encoding"),
+                                };
+                                quote! {
                                     match val {
                                         idol_runtime::RequestError::Fail(f) => {
                                             // Note: because of the way `into_fault` works,
@@ -612,14 +623,11 @@ impl Generator {
                                             }
                                         }
                                         idol_runtime::RequestError::Runtime(e) => {
-                                            let mut reply_buf = [0u8; <#ty as hubpack::SerializedSize>::MAX_SIZE];
-                                            let n_reply = hubpack::serialize(&mut reply_buf, &e).map_err(|_| ()).unwrap_lite();
-                                            userlib::sys_reply(rm.sender, 1, &reply_buf[..n_reply]);
+                                            #reply
                                         }
                                     }
                                     Ok(())
-                                },
-                                encoding => panic!("Complex error types not supported for {encoding:?} encoding"),
+                                }
                             },
                             syntax::Error::CLike(_) => quote! {
                                 Err(val.map_runtime(u16::from))
