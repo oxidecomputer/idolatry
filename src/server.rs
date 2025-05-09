@@ -608,7 +608,7 @@ impl Generator {
                                     },
                                     syntax::Encoding::Zerocopy => quote! {
                                         userlib::sys_reply(rm.sender, 1, zerocopy::IntoBytes::as_bytes(&e));
-                                    }
+                                    },
                                     encoding => panic!("Complex error types not supported for {encoding:?} encoding"),
                                 };
                                 quote! {

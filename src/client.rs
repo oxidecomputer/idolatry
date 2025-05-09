@@ -363,7 +363,7 @@ impl Generator {
             };
 
             let reply = {
-                let gen_zerocopy_decode = |repr_ty: &syntax::Ty, msg: &str| {
+                let gen_zerocopy_decode = |repr_ty: &syn::Type, msg: &str| {
                     let reply_ty =
                         quote::format_ident!("{iface_name}_{name}_{msg}");
                     quote! {
@@ -381,8 +381,7 @@ impl Generator {
                 };
                 let gen_decode = |t: &syntax::AttributedTy| match op.encoding {
                     syntax::Encoding::Zerocopy => {
-                        let repr_ty = t.repr_ty();
-                        gen_zerocopy_decode(repr_ty, "REPLY")
+                        gen_zerocopy_decode(&t.repr_ty(), "REPLY")
                     }
                     syntax::Encoding::Ssmarshal => quote! {
                         let (v, _): (#t, _) = ssmarshal::deserialize(&reply[..len]).unwrap_lite();
@@ -492,8 +491,20 @@ impl Generator {
                                             let (v, _): (#ty, _) = hubpack::deserialize(&reply[..len]).unwrap_lite();
                                         }
                                     }
+                                    syntax::Encoding::Zerocopy
+                                        if ty.is_bool() =>
+                                    {
+                                        let decode = gen_zerocopy_decode(
+                                            &syn::parse_quote! { u8 },
+                                            "ERROR",
+                                        );
+                                        quote! {
+                                            #decode
+                                            let v = v != 0;
+                                        }
+                                    }
                                     syntax::Encoding::Zerocopy => {
-                                        gen_zerocopy_decode(ty, "ERROR")
+                                        gen_zerocopy_decode(&ty.0, "ERROR")
                                     }
                                     e => {
                                         panic!(
