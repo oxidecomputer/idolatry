@@ -369,14 +369,14 @@ impl Generator {
                     quote! {
                         let _len = len;
                         #[derive(
-                            zerocopy_derive::FromBytes,
+                            zerocopy_derive::TryFromBytes,
                             zerocopy_derive::Unaligned,
                         )]
                         #[repr(C, packed)]
                         struct #reply_ty {
                             value: #repr_ty,
                         }
-                        let v: #repr_ty = zerocopy::FromBytes::read_from_bytes(&reply[..]).unwrap_lite();
+                        let v: #repr_ty = zerocopy::TryFromBytes::read_from_bytes(&reply[..]).unwrap_lite();
                     }
                 };
                 let gen_decode = |t: &syntax::AttributedTy| match op.encoding {
