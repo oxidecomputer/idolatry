@@ -376,7 +376,7 @@ impl Generator {
                         struct #reply_ty {
                             value: #repr_ty,
                         }
-                        let v: #repr_ty = zerocopy::TryFromBytes::read_from_bytes(&reply[..]).unwrap_lite();
+                        let v: #repr_ty = zerocopy::TryFromBytes::try_read_from_bytes(&reply[..]).unwrap_lite();
                     }
                 };
                 let gen_decode = |t: &syntax::AttributedTy| match op.encoding {
