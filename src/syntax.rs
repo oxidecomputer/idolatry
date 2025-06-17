@@ -496,7 +496,7 @@ impl quote::ToTokens for Ty {
 
 /// Enumerates different ways that an error type might be passed through the
 /// REPLY syscall.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Error {
     /// The error type should be created from the (non-zero) return code only.
     /// The reply message in error cases is expected to be zero-length.

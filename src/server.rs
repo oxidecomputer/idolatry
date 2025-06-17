@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use super::{common, syntax, Generator};
+use super::{common, syntax, GenerateErrorServer, Generator};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::BTreeMap;
@@ -103,6 +103,15 @@ impl Generator {
                 self.generate_server_in_order_trait(iface, allowed_callers)?
             }
         });
+
+        let err_ty = match self.error_server {
+            GenerateErrorServer::No => None,
+            GenerateErrorServer::Maybe => self.common_error_type(iface).ok(),
+            GenerateErrorServer::Yes => Some(self.common_error_type(iface)?),
+        };
+        if let Some(e) = err_ty {
+            tokens.extend(self.error_server_tokens(iface, e));
+        }
 
         Ok(tokens)
     }
@@ -697,6 +706,128 @@ impl Generator {
             }
         })
     }
+
+    fn common_error_type(
+        &self,
+        iface: &syntax::Interface,
+    ) -> Result<syntax::Error, Box<dyn std::error::Error + Send + Sync>> {
+        let mut prev = None;
+        for (name, op) in &iface.ops {
+            match &op.reply {
+                syntax::Reply::Simple(..) => {
+                    return Err(format!(
+                        "operation {name} does not return an Error type"
+                    )
+                    .into())
+                }
+                syntax::Reply::Result { err, .. } => {
+                    if matches!(err, syntax::Error::ServerDeath) {
+                        return Err(
+                            format!("operation {name} is infallible").into()
+                        );
+                    } else if prev.as_ref().is_some_and(|prev| prev != err) {
+                        return Err(format!(
+                            "operation {name} has a mismatched error type"
+                        )
+                        .into());
+                    } else {
+                        prev = Some(err.clone())
+                    }
+                }
+            }
+        }
+        prev.ok_or_else(|| "no error type".into())
+    }
+
+    fn error_server_tokens(
+        &self,
+        iface: &syntax::Interface,
+        err: syntax::Error,
+    ) -> TokenStream {
+        let iface_name = &iface.name;
+        let trt = format_ident!("InOrder{iface_name}Impl");
+
+        let fns = iface.ops.iter().map(|(name, op)| {
+            let args = op_args(op);
+            let leases = op_leases(op);
+            let syntax::Reply::Result { ok, .. } = &op.reply else {
+                panic!("cannot build error server with non-result functions");
+            };
+            quote! {
+                fn #name(
+                    &mut self,
+                    msg: &userlib::RecvMessage,
+                    #( #args )*
+                    #( #leases )*
+                ) -> Result<#ok, idol_runtime::RequestError<#err>> {
+                    return Err(self.err.into())
+                }
+            }
+        });
+
+        quote! {
+            #[doc = "A server which returns an error for every function"]
+            pub struct FailServer {
+                err: #err
+            }
+            #[allow(dead_code)]
+            impl FailServer {
+                pub fn new(err: #err) -> Self {
+                    Self { err }
+                }
+            }
+            #[allow(unused)]
+            impl #trt for FailServer {
+                #( #fns )*
+            }
+
+            impl idol_runtime::NotificationHandler for FailServer {
+                fn current_notification_mask(&self) -> u32 {
+                    0
+                }
+
+                fn handle_notification(&mut self, _bits: u32) {
+                    unreachable!()
+                }
+            }
+
+        }
+    }
+}
+
+fn op_args(
+    op: &syntax::Operation,
+) -> impl Iterator<Item = TokenStream> + use<'_> {
+    op.args.iter().map(|(argname, arg)| {
+        let ty = &arg.ty;
+        quote! {
+            #argname: #ty,
+        }
+    })
+}
+
+fn op_leases(
+    op: &syntax::Operation,
+) -> impl Iterator<Item = TokenStream> + use<'_> {
+    op.leases.iter().map(|(leasename, lease)| {
+        let r = if lease.read { "R" } else { ""};
+        let w = if lease.write { "W" } else { ""};
+        let lease_kind = format_ident!("{r}{w}");
+        let ty = &lease.ty;
+        if let Some(n) = lease.max_len {
+            // cast to usize here is load bearing, because `quote` will
+            // suffix this with `{n}u32` when interpolating, but it needs to
+            // be a `usize`.
+            let n = n.get() as usize;
+            quote! {
+                #leasename: idol_runtime::LenLimit<idol_runtime::Leased<idol_runtime::#lease_kind, #ty>, #n>,
+            }
+        } else {
+            quote! {
+                #leasename: idol_runtime::Leased<idol_runtime::#lease_kind, #ty>,
+            }
+        }
+    })
 }
 
 fn generate_trait_def(
@@ -704,31 +835,8 @@ fn generate_trait_def(
     trt: &syn::Ident,
 ) -> TokenStream {
     let ops = iface.ops.iter().map(|(name, op)| {
-        let args = op.args.iter().map(|(argname, arg)| {
-            let ty = &arg.ty;
-            quote! {
-                #argname: #ty,
-            }
-        });
-        let leases = op.leases.iter().map(|(leasename, lease)| {
-            let r = if lease.read { "R" } else { ""};
-            let w = if lease.write { "W" } else { ""};
-            let lease_kind = format_ident!("{r}{w}");
-            let ty = &lease.ty;
-            if let Some(n) = lease.max_len {
-                // cast to usize here is load bearing, because `quote` will
-                // suffix this with `{n}u32` when interpolating, but it needs to
-                // be a `usize`.
-                let n = n.get() as usize;
-                quote! {
-                    #leasename: idol_runtime::LenLimit<idol_runtime::Leased<idol_runtime::#lease_kind, #ty>, #n>,
-                }
-            } else {
-                quote! {
-                    #leasename: idol_runtime::Leased<idol_runtime::#lease_kind, #ty>,
-                }
-            }
-        });
+        let args = op_args(op);
+        let leases = op_leases(op);
         let mut error_type_bounds = quote! {};
         let ret_ty = match &op.reply {
             syntax::Reply::Result { ok, err } => {

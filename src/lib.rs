@@ -16,6 +16,18 @@ pub struct Generator {
     pub(crate) counters: CounterSettings,
     pub(crate) fmt: bool,
     pub(crate) extra_op_enum_derives: Vec<syn::Path>,
+    pub(crate) error_server: GenerateErrorServer,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+enum GenerateErrorServer {
+    /// Do not generate an error server under any circumstances
+    No,
+    /// Generate an error server if all functions have the same error type
+    #[default]
+    Maybe,
+    /// Generate an error server; fail if functions have different error types
+    Yes,
 }
 
 impl Generator {
@@ -24,6 +36,7 @@ impl Generator {
             counters: Default::default(),
             extra_op_enum_derives: Vec::new(),
             fmt: true,
+            error_server: Default::default(),
         }
     }
 
@@ -74,6 +87,22 @@ impl Generator {
     /// If `true`, generated code will be formatted with `prettyplease`.
     pub fn with_fmt(self, fmt: bool) -> Self {
         Self { fmt, ..self }
+    }
+
+    /// Disables error server generation
+    pub fn without_error_server(self) -> Self {
+        Self {
+            error_server: GenerateErrorServer::No,
+            ..self
+        }
+    }
+
+    /// Enables mandatory error server generation
+    pub fn with_error_server(self) -> Self {
+        Self {
+            error_server: GenerateErrorServer::Yes,
+            ..self
+        }
     }
 
     /// Add additional traits to derive for the generated operation enum.
