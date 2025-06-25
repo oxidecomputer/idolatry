@@ -760,7 +760,7 @@ impl Generator {
                     #( #args )*
                     #( #leases )*
                 ) -> Result<#ok, idol_runtime::RequestError<#err>> {
-                    return Err(self.err.into())
+                    Err(self.err.into())
                 }
             }
         });
