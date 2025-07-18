@@ -129,12 +129,15 @@ impl Generator {
                     // Zerocopy moves fields as a packed struct, so the sum of input
                     // type sizes is sufficient to fit the message.
                     syntax::Encoding::Zerocopy => {
-                        let vals = op.args.values().map(|arg| {
-                            quote! {
-                                + core::mem::size_of::<#arg>()
-                            }
-                        });
-                        quote! { 0 #( #vals )* }
+                        let mut vals = op
+                            .args
+                            .values()
+                            .map(|arg| quote! { core::mem::size_of::<#arg>() });
+                        if let Some(v) = vals.next() {
+                            quote! { #v #(+ #vals)* }
+                        } else {
+                            quote! { 0 }
+                        }
                     }
 
                     // ssmarshal guarantees that the serialized size will be no longer
