@@ -627,7 +627,6 @@ impl Generator {
                     // expressions.
                     unused_braces,
                     unused_parens)]
-            #[automatically_derived]
             impl #iface_name {
                 #(#ops)*
             }
