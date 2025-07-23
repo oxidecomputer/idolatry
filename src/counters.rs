@@ -172,9 +172,7 @@ impl Counters {
         quote! {
             #enum_def
 
-            #[used]
-            static #counters_static: <#event_enum as counters::Count>::Counters =
-                <#event_enum as counters::Count>::NEW_COUNTERS;
+            counters::counters!(#counters_static, #event_enum);
         }
     }
 

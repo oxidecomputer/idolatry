@@ -375,6 +375,7 @@ impl Generator {
                                 zerocopy_derive::Unaligned,
                             )]
                             #[repr(C, packed)]
+                            #[allow(dead_code)] // Used by Humility
                             struct #reply_ty {
                                 value: #repr_ty,
                             }
@@ -568,6 +569,7 @@ impl Generator {
 
                         // If the operation is idempotent but failed due to server death, retry.
                         if let Some(g) = userlib::extract_new_generation(rc) {
+                            let _len = len;
                             self.current_id.set(userlib::TaskId::for_index_and_gen(task.index(), g));
                             continue;
                         }
@@ -627,7 +629,6 @@ impl Generator {
                     // expressions.
                     unused_braces,
                     unused_parens)]
-            #[automatically_derived]
             impl #iface_name {
                 #(#ops)*
             }
