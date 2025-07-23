@@ -558,6 +558,7 @@ impl Generator {
 
                         // If the operation is idempotent but failed due to server death, retry.
                         if let Some(g) = userlib::extract_new_generation(rc) {
+                            let _len = len;
                             self.current_id.set(userlib::TaskId::for_index_and_gen(task.index(), g));
                             continue;
                         }
