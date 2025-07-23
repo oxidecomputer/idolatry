@@ -365,19 +365,9 @@ impl Generator {
             let reply = {
                 let gen_decode = |t: &syntax::AttributedTy| match op.encoding {
                     syntax::Encoding::Zerocopy => {
-                        let reply_ty =
-                            quote::format_ident!("{iface_name}_{name}_REPLY");
                         let repr_ty = t.repr_ty();
                         quote! {
                             let _len = len;
-                            #[derive(
-                                zerocopy_derive::FromBytes,
-                                zerocopy_derive::Unaligned,
-                            )]
-                            #[repr(C, packed)]
-                            struct #reply_ty {
-                                value: #repr_ty,
-                            }
                             let v: #repr_ty = zerocopy::FromBytes::read_from_bytes(&reply[..]).unwrap_lite();
                         }
                     }
