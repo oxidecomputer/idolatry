@@ -375,6 +375,7 @@ impl Generator {
                                 zerocopy_derive::Unaligned,
                             )]
                             #[repr(C, packed)]
+                            #[allow(dead_code)] // Used by Humility
                             struct #reply_ty {
                                 value: #repr_ty,
                             }
