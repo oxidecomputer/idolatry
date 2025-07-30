@@ -385,8 +385,11 @@ impl Generator {
                     syntax::Encoding::Ssmarshal => quote! {
                         let (v, _): (#t, _) = ssmarshal::deserialize(&reply[..len]).unwrap_lite();
                     },
-                    syntax::Encoding::Hubpack => quote! {
-                        let (v, _): (#t, _) = hubpack::deserialize(&reply[..len]).unwrap_lite();
+                    syntax::Encoding::Hubpack => {
+                        let repr_ty = t.repr_ty();
+                        quote! {
+                            let (v, _): (#repr_ty, _) = hubpack::deserialize(&reply[..len]).unwrap_lite();
+                        }
                     },
                 };
 
