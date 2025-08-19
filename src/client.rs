@@ -405,7 +405,11 @@ impl Generator {
                         };
                         let ret = match &t.recv {
                             syntax::RecvStrategy::FromBytes
-                                if t.ty.is_bool() =>
+                                if t.ty.is_bool()
+                                    && matches!(
+                                        op.encoding,
+                                        syntax::Encoding::Zerocopy
+                                    ) =>
                             {
                                 quote! {return v != 0;}
                             }
