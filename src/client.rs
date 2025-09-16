@@ -442,7 +442,11 @@ impl Generator {
                         let decode = gen_decode(ok);
                         let ret_ok = match &ok.recv {
                             syntax::RecvStrategy::FromBytes
-                                if ok.ty.is_bool() =>
+                                if ok.ty.is_bool()
+                                    && matches!(
+                                        op.encoding,
+                                        syntax::Encoding::Zerocopy
+                                    ) =>
                             {
                                 quote! { return Ok(v != 0); }
                             }
