@@ -12,8 +12,8 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use counters::{armv6m_atomic_hack::AtomicU32Ext, Count};
 use userlib::{
     sys_borrow_info, sys_borrow_read, sys_borrow_write, sys_recv, sys_reply,
-    sys_reply_fault, FromPrimitive, LeaseAttributes, RecvMessage,
-    ReplyFaultReason, TaskId,
+    sys_reply_fault, FromPrimitive, LeaseAttributes, NotificationBits,
+    RecvMessage, ReplyFaultReason, TaskId,
 };
 use zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes};
 
@@ -148,7 +148,7 @@ where
 ///         // Do not set any bits in the notification mask.
 ///         0
 ///     }
-///     fn handle_notification(&mut self, _bits: u32) {
+///     fn handle_notification(&mut self, _bits: userlib::NotificationBits) {
 ///         unreachable!()
 ///     }
 /// }
@@ -168,7 +168,7 @@ pub trait NotificationHandler {
     /// The dispatch loop calls this routine when RECV has returned
     /// notifications instead of a message. The notification bits that were
     /// observed to be set (and atomically cleared) are passed as `bits`.
-    fn handle_notification(&mut self, bits: u32);
+    fn handle_notification(&mut self, bits: NotificationBits);
 }
 
 /// Trait implemented by enums that model the operations in an IPC interface.
@@ -262,7 +262,9 @@ pub fn dispatch<S: NotificationHandler, Op: ServerOp>(
         // compiled out as unreachable. This allows it to include e.g. a panic
         // without bloating the text size.
         if mask != 0 {
-            server.1.handle_notification(rm.operation);
+            server
+                .1
+                .handle_notification(NotificationBits::new(rm.operation));
         }
         return;
     }
