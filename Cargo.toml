@@ -9,7 +9,6 @@ no-counters = []
 [dependencies]
 ron = { version = "0.8", default-features = false }
 serde = { version = "1.0", default-features = false }
-toml = { version = "0.7", default-features = false }
 indexmap = {version = "1.7", default-features = false, features = ["serde-1"]}
 quote = { version = "1.0", default-features = false }
 proc-macro2 = { version = "1.0.74" }
