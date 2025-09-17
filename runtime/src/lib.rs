@@ -287,6 +287,11 @@ pub fn dispatch<S: NotificationHandler, Op: ServerOp>(
         return;
     }
 
+    if rm.lease_count != op.required_lease_count() {
+        sys_reply_fault(rm.sender, ReplyFaultReason::BadLeases);
+        return;
+    }
+
     match server.handle(op, incoming, &rm) {
         Ok(()) => {
             // stub has taken care of it.
