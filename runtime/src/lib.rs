@@ -459,6 +459,20 @@ impl<A: Attribute, T> Leased<A, [T]> {
     }
 }
 
+/// These functions are available on any `Leased<A, [T; N]>`, that is, any
+/// leased array independent of the choice of attributes.
+impl<A: Attribute, T, const N: usize> Leased<A, [T; N]> {
+    /// Returns the number of elements of type `T` in the leased array.
+    pub fn len(&self) -> usize {
+        N
+    }
+
+    // N.B. that we need not have a `check_array` function here, because
+    // `Leased<A; T: Sized>::check_sized` *is* inherently also `Leased<A; [T;
+    // N]>::check_array` --- there's nothing we'd actually need to check that
+    // the sized impl doesn't already do..
+}
+
 /// These functions are only available for read-only leased data for `Sized`
 /// types, i.e. leases of a single struct or similar.
 impl<T> Leased<R, T> {
@@ -572,6 +586,8 @@ where
 /// These functions are available on any readable leased slice (that is,
 /// read-only or read-write) where the element type `T` is `Sized` and can be
 /// moved around by naive mem-copy.
+///
+/// Similar methods exist for leased fixed-size arrays.
 impl<A, T> Leased<A, [T]>
 where
     A: AttributeRead,
@@ -641,6 +657,82 @@ where
     }
 }
 
+/// These functions are available on any readable leased array (that is,
+/// read-only or read-write) where the element type `T` is `Sized` and can be
+/// moved around by naive mem-copy.
+impl<A, T, const N: usize> Leased<A, [T; N]>
+where
+    A: AttributeRead,
+    T: Sized + Copy + FromZeros + FromBytes + IntoBytes,
+{
+    /// Reads a single element of the leased array copy.
+    ///
+    /// Like indexing a native array, `index` must be less than `N`, or
+    /// this will panic.
+    ///
+    /// If the lending task has been restarted between the time we checked lease
+    /// attributes and the time you call `read_at`, this will return `None`.
+    /// Otherwise, it returns `Some(value)`. It's therefore safe to treat a
+    /// `None` return as aborting the request.
+    pub fn read_at(&self, index: usize) -> Option<T> {
+        assert!(index < N);
+
+        let mut temp = T::new_zeroed();
+        let offset = core::mem::size_of::<T>().checked_mul(index)?;
+        let (rc, len) = sys_borrow_read(
+            self.lender,
+            self.index,
+            offset,
+            temp.as_mut_bytes(),
+        );
+        if rc != 0 || len != core::mem::size_of::<T>() {
+            None
+        } else {
+            Some(temp)
+        }
+    }
+
+    /// Reads a range of elements of the leased array into `dest` by copy.
+    ///
+    /// Like indexing a native array, `range.start` must be less than `N`, and
+    /// `range.end` must be less than or equal to `N`, or this will panic.
+    ///
+    /// If the lending task has been restarted between the time we checked lease
+    /// attributes and the time you call `read_range`, this will return `None`.
+    /// Otherwise, it returns `Some(value)`. It's therefore safe to treat a
+    /// `None` return as aborting the request.
+    pub fn read_range(
+        &self,
+        range: Range<usize>,
+        dest: &mut [T],
+    ) -> Result<(), ()> {
+        // One could also just rely on `sys_borrow_write` to check that the
+        // range is valid, but we may as well kill ourselves rather than making
+        // the kernel do it for us?
+        assert!(range.start < N);
+        assert!(range.end <= N);
+        let offset = core::mem::size_of::<T>()
+            .checked_mul(range.start)
+            .ok_or(())?;
+        let expected_len = core::mem::size_of::<T>()
+            .checked_mul(range.end - range.start)
+            .ok_or(())?;
+
+        let (rc, len) = sys_borrow_read(
+            self.lender,
+            self.index,
+            offset,
+            dest.as_mut_bytes(),
+        );
+
+        if rc != 0 || len != expected_len {
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+}
+
 /// These functions are available on any writable lease (that is, write-only or
 /// read-write) where the content type `T` is `Sized` and can be moved around by
 /// naive mem-copy.
@@ -669,6 +761,8 @@ where
 /// These functions are available on any writable leased slice (that is,
 /// write-only or read-write) where the element type `T` is `Sized` and can be
 /// moved around by naive mem-copy.
+///
+/// Similar functions exist for leased fixed-size arrays.
 impl<A, T> Leased<A, [T]>
 where
     A: AttributeWrite,
@@ -709,6 +803,79 @@ where
         range: Range<usize>,
         src: &[T],
     ) -> Result<(), ()> {
+        let offset = core::mem::size_of::<T>()
+            .checked_mul(range.start)
+            .ok_or(())?;
+        let expected_len = core::mem::size_of::<T>()
+            .checked_mul(range.end - range.start)
+            .ok_or(())?;
+
+        let (rc, len) =
+            sys_borrow_write(self.lender, self.index, offset, src.as_bytes());
+
+        if rc != 0 || len != expected_len {
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// These functions are available on any writable leased fixed-size array (that
+/// is, write-only or read-write) where the element type `T` is `Sized` and can
+/// be moved around by naive mem-copy.
+///
+/// Similar functions exist for leased fixed-size arrays.
+impl<A, T, const N: usize> Leased<A, [T; N]>
+where
+    A: AttributeWrite,
+    T: Sized + Copy + IntoBytes + Immutable,
+{
+    /// Writes a single element of the leased array by copy.
+    ///
+    /// Like indexing a native slice, `index` must be less than `self.len()`, or
+    /// this will panic.
+    ///
+    /// If the lending task has been restarted between the time we checked lease
+    /// attributes and the time you call `write_at`, this will return `Err(())`.
+    /// Otherwise, it returns `Ok(())`. It's therefore safe to treat an `Err`
+    /// return as aborting the request.
+    pub fn write_at(&self, index: usize, value: T) -> Result<(), ()> {
+        // One could also just rely on `sys_borrow_write` to check that the
+        // index is valid, but it seems more polite to kill ourselves rather
+        // than making the kernel do it for us?
+        assert!(index < N);
+        let offset = core::mem::size_of::<T>().checked_mul(index).ok_or(())?;
+        let (rc, len) =
+            sys_borrow_write(self.lender, self.index, offset, value.as_bytes());
+        if rc != 0 || len != core::mem::size_of::<T>() {
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Writes a range of elements from `src` into the leased array by copy.
+    ///
+    /// Like indexing a native array, `range.start` must be less than
+    /// `self.len()`, and `range.end` must be less than or equal to
+    /// `self.len()`, or this will panic.
+    ///
+    /// If the lending task has been restarted between the time we checked lease
+    /// attributes and the time you call `write_range`, this will return
+    /// `Err(())`. Otherwise, it returns `Ok(())`. It's therefore safe to treat
+    /// an `Err` return as aborting the request.
+    pub fn write_range(
+        &self,
+        range: Range<usize>,
+        src: &[T],
+    ) -> Result<(), ()> {
+        // One could also just rely on `sys_borrow_write` to check that the
+        // range is valid, but we may as well kill ourselves rather than making
+        // the kernel do it for us?
+        assert!(range.start < N);
+        assert!(range.end <= N);
+
         let offset = core::mem::size_of::<T>()
             .checked_mul(range.start)
             .ok_or(())?;
