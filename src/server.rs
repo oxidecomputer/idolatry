@@ -917,7 +917,7 @@ fn generate_server_section(
         // To allow it to be pulled out by debuggers, we drop the entirety of the
         // interface definition in a dedicated (unloaded) section
         #[used]
-        #[link_section = ".idolatry"]
+        #[unsafe(link_section = ".idolatry")]
         static #name: [u8; #len] = *#byte_str;
     }
 }
