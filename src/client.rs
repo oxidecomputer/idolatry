@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use super::{common, syntax, Generator};
+use super::{Generator, common, syntax};
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::env;
@@ -39,7 +39,7 @@ impl Generator {
         let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
         let stub_file = File::create(out.join(stub_name)).unwrap();
         self.generate_client_stub_from_file(source, stub_file)?;
-        println!("cargo:rerun-if-changed={}", source);
+        println!("cargo:rerun-if-changed={source}");
         Ok(())
     }
 
@@ -85,16 +85,15 @@ impl Generator {
                         "idempotent operation with read/write lease".into()
                     );
                 }
-                match &op.reply {
-                    syntax::Reply::Result { err, .. }
-                        if matches!(err, syntax::Error::ServerDeath) =>
-                    {
-                        return Err(
+                if let syntax::Reply::Result {
+                    err: syntax::Error::ServerDeath,
+                    ..
+                } = &op.reply
+                {
+                    return Err(
                             format!("idempotent operations should not indicate server death: {name}")
                                 .into(),
                         );
-                    }
-                    _ => (),
                 }
             } else {
                 // A non-idempotent operation had better have an error type.
@@ -393,11 +392,11 @@ impl Generator {
                 match &op.reply {
                     syntax::Reply::Simple(t) => {
                         let mut decode = gen_decode(t);
-                        if let syn::Type::Tuple(tt) = &t.ty.0 {
-                            if tt.elems.is_empty() {
-                                // Override for the `Simple("()")` case.
-                                decode = quote::quote! { let v = (); };
-                            }
+                        if let syn::Type::Tuple(tt) = &t.ty.0
+                            && tt.elems.is_empty()
+                        {
+                            // Override for the `Simple("()")` case.
+                            decode = quote::quote! { let v = (); };
                         }
                         let count = match counters {
                             Some(ref ctrs) => ctrs.count_simple_op(name),
@@ -525,14 +524,17 @@ impl Generator {
                                     }
                                     e => {
                                         panic!(
-                                        "Complex error types not supported for \
-                                        {e:?} encoding, sorry"
-                                    );
+                                            "Complex error types not supported for \
+                                             {e:?} encoding, sorry"
+                                        );
                                     }
                                 }
                             }
                             syntax::Error::ServerDeath => {
-                                assert!(!op.idempotent, "idempotent operations should not indicate server death");
+                                assert!(
+                                    !op.idempotent,
+                                    "idempotent operations should not indicate server death"
+                                );
                                 let count = match counters {
                                     Some(ref counters) => counters.count_result(
                                         name,

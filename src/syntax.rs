@@ -298,6 +298,7 @@ pub struct Lease {
 }
 
 /// Potential packings of reply types into the Hubris IPC reply format.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Reply {
     /// The operation can't fail, or can only fail through reply-fault, and
@@ -433,7 +434,7 @@ impl<'de> Deserialize<'de> for AttributedTy {
     where
         D: serde::de::Deserializer<'de>,
     {
-        deserializer.deserialize_any(AttributedTyVisitor::default())
+        deserializer.deserialize_any(AttributedTyVisitor)
     }
 }
 
@@ -603,9 +604,10 @@ mod tests {
         "#;
 
         let err = Interface::from_str(HAS_DUPES).unwrap_err();
-        assert!(err
-            .to_string()
-            .starts_with("invalid entry: found duplicate key"));
+        assert!(
+            err.to_string()
+                .starts_with("invalid entry: found duplicate key")
+        );
     }
 
     #[test]
@@ -630,9 +632,10 @@ mod tests {
         "#;
 
         let err = Interface::from_str(HAS_DUPES).unwrap_err();
-        assert!(err
-            .to_string()
-            .starts_with("invalid entry: found duplicate key"));
+        assert!(
+            err.to_string()
+                .starts_with("invalid entry: found duplicate key")
+        );
     }
 
     #[test]
@@ -660,8 +663,9 @@ mod tests {
         "#;
 
         let err = Interface::from_str(HAS_DUPES).unwrap_err();
-        assert!(err
-            .to_string()
-            .starts_with("invalid entry: found duplicate key"));
+        assert!(
+            err.to_string()
+                .starts_with("invalid entry: found duplicate key")
+        );
     }
 }

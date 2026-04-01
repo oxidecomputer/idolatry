@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use super::{common, syntax, GenerateErrorServer, Generator};
+use super::{GenerateErrorServer, Generator, common, syntax};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::BTreeMap;
@@ -78,7 +78,7 @@ impl Generator {
             write!(stub_file, "{tokens}")?;
         }
 
-        println!("cargo:rerun-if-changed={}", source);
+        println!("cargo:rerun-if-changed={source}");
         Ok(())
     }
 
@@ -353,24 +353,24 @@ impl Generator {
                 // data).
                 let mut reply_ty_def = quote! {};
 
-                if let syntax::Reply::Result { ok, err: _ } = &op.reply {
-                    if let syntax::Encoding::Zerocopy = op.encoding {
-                        let reply_ty = format_ident!("{}_{name}_REPLY", iface.name);
-                        let static_name = format_ident!(
-                            "{}_{}_REPLY",
-                            iface.name.uppercase(),
-                            name.uppercase(),
-                        );
-                        reply_ty_def = quote! {
-                            #[repr(C, packed)]
-                            struct #reply_ty {
-                                value: #ok,
-                            }
-                            #[allow(dead_code)]
-                            static #static_name: Option<&#reply_ty> = None;
+                if let syntax::Reply::Result { ok, err: _ } = &op.reply
+                    && let syntax::Encoding::Zerocopy = op.encoding
+                {
+                    let reply_ty = format_ident!("{}_{name}_REPLY", iface.name);
+                    let static_name = format_ident!(
+                        "{}_{}_REPLY",
+                        iface.name.uppercase(),
+                        name.uppercase(),
+                    );
+                    reply_ty_def = quote! {
+                        #[repr(C, packed)]
+                        struct #reply_ty {
+                            value: #ok,
                         }
+                        #[allow(dead_code)]
+                        static #static_name: Option<&#reply_ty> = None;
                     }
-                };
+                }
 
                 quote! {
                     #struct_def
@@ -429,9 +429,9 @@ impl Generator {
         for opname in allowed_callers.keys() {
             if !iface.ops.contains_key(opname.as_str()) {
                 return Err(Box::from(format!(
-                "allowed_callers operation `{}` does not exist for this server",
-                opname
-            )));
+                    "allowed_callers operation `{opname}` \
+                     does not exist for this server",
+                )));
             }
         }
 
@@ -721,7 +721,7 @@ impl Generator {
                     return Err(format!(
                         "operation {name} does not return an Error type"
                     )
-                    .into())
+                    .into());
                 }
                 syntax::Reply::Result { err, .. } => {
                     if matches!(err, syntax::Error::ServerDeath) {
