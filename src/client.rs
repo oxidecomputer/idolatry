@@ -90,10 +90,11 @@ impl Generator {
                     ..
                 } = &op.reply
                 {
-                    return Err(
-                            format!("idempotent operations should not indicate server death: {name}")
-                                .into(),
-                        );
+                    return Err(format!(
+                        "idempotent operations should not \
+                         indicate server death: {name}"
+                    )
+                    .into());
                 }
             } else {
                 // A non-idempotent operation had better have an error type.

@@ -9,11 +9,11 @@ use core::marker::PhantomData;
 use core::num::NonZeroU32;
 use core::ops::Range;
 use core::sync::atomic::{AtomicU32, Ordering};
-use counters::{armv6m_atomic_hack::AtomicU32Ext, Count};
+use counters::{Count, armv6m_atomic_hack::AtomicU32Ext};
 use userlib::{
-    sys_borrow_info, sys_borrow_read, sys_borrow_write, sys_recv, sys_reply,
-    sys_reply_fault, FromPrimitive, LeaseAttributes, NotificationBits,
-    RecvMessage, ReplyFaultReason, TaskId,
+    FromPrimitive, LeaseAttributes, NotificationBits, RecvMessage,
+    ReplyFaultReason, TaskId, sys_borrow_info, sys_borrow_read,
+    sys_borrow_write, sys_recv, sys_reply, sys_reply_fault,
 };
 use zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes};
 
@@ -51,6 +51,7 @@ pub struct ServerDeath;
 
 impl Count for ServerDeath {
     type Counters = AtomicU32;
+    #[allow(clippy::declare_interior_mutable_const)]
     const NEW_COUNTERS: Self::Counters = AtomicU32::new(0);
     fn count(&self, count: &Self::Counters) {
         AtomicU32Ext::fetch_add(count, 1, Ordering::Relaxed);
@@ -444,15 +445,15 @@ impl<A: Attribute, T> Leased<A, [T]> {
         if !info.attributes.contains(required_atts) {
             return None;
         }
-        if info.len % core::mem::size_of::<T>() != 0 {
+        if !info.len.is_multiple_of(core::mem::size_of::<T>()) {
             return None;
         }
         let len = info.len / core::mem::size_of::<T>();
 
-        if let Some(max_len) = max_len {
-            if len > max_len.get() as usize {
-                return None;
-            }
+        if let Some(max_len) = max_len
+            && len > max_len.get() as usize
+        {
+            return None;
         }
 
         Some(len)
@@ -946,11 +947,7 @@ impl<A: Attribute, T, const N: usize> TryFrom<Leased<A, [T]>>
     type Error = ();
 
     fn try_from(x: Leased<A, [T]>) -> Result<Self, Self::Error> {
-        if x.len() <= N {
-            Ok(Self(x))
-        } else {
-            Err(())
-        }
+        if x.len() <= N { Ok(Self(x)) } else { Err(()) }
     }
 }
 
@@ -1159,7 +1156,7 @@ impl<'a> BufWriter<'a> for &'a mut [u8] {
     fn write(&mut self, v: u8) -> Result<(), ()> {
         // We have to get a little sneaky to work around variance checks,
         // because self is a &'b &'a mut [u8]
-        let real = core::mem::replace(self, &mut []);
+        let real = core::mem::take(self);
         let (d, next) = real.split_first_mut().ok_or(())?;
         *d = v;
         *self = next;
