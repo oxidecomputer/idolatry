@@ -3,12 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use std::io::Read;
+use std::str::FromStr;
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut text = String::new();
     std::io::stdin().read_to_string(&mut text)?;
 
-    let iface: idol::syntax::Interface = ron::de::from_str(&text)?;
+    let raw = idol::syntax::RawInterface::from_str(&text)?;
+    let iface = raw.resolve(None)?;
 
     idol::Generator::new()
         .with_counters(idol::CounterSettings::default())

@@ -158,8 +158,115 @@ impl std::borrow::Borrow<str> for Name {
     }
 }
 
+/// Raw definition of an IPC interface, deserialized from a file
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename = "Interface")]
+pub struct RawInterface {
+    /// Name of interface. This will be used in generated types, and should
+    /// match Rust type name conventions.
+    ///
+    /// If not present, `base` must be present
+    #[serde(default)]
+    name: Option<Name>,
+
+    /// Interface from which this interface inherits base ops
+    ///
+    /// Mutually exclusive with `name`
+    #[serde(default)]
+    base: Option<String>,
+
+    /// Operations supported by the interface. The names of the operations
+    /// should be Rust identifiers, and will be used in generated function
+    /// names.
+    ///
+    /// This is an `IndexMap`, and the order of declaration of the operations is
+    /// significant -- it determines the operation numbering.
+    #[serde(
+        deserialize_with = "crate::serde_helpers::deserialize_reject_dup_keys"
+    )]
+    ops: IndexMap<Name, Operation>,
+}
+
+impl RawInterface {
+    /// Resolves the [`base`](Self::base) field to construct an [`Interface`]
+    ///
+    /// The `source` argument is the path to the original interface; base paths
+    /// are assumed to be within the same folder (if they are relative paths).
+    pub fn resolve(
+        self,
+        source: Option<&std::path::Path>,
+    ) -> Result<Interface, Box<dyn std::error::Error + Send + Sync>> {
+        use serde::de::Error;
+        if let Some(base) = self.base {
+            let base = std::path::PathBuf::from(base);
+            let base = if base.is_absolute() {
+                base
+            } else if let Some(source) = source {
+                source.parent().unwrap().join(base)
+            } else {
+                base
+            };
+            let base_text = std::fs::read_to_string(&base)?;
+            println!("cargo:rerun-if-changed={}", base.display());
+            let base: BaseInterface = ron::de::from_str(&base_text)?;
+            let name =
+                match self.name {
+                    Some(..) => return Err(ron::Error::custom(
+                        "name cannot be provided in both interface and base",
+                    )
+                    .into()),
+                    None => base.name,
+                };
+            let mut ops = base.ops;
+            for (name, value) in self.ops {
+                use indexmap::map::Entry;
+                match ops.entry(name) {
+                    Entry::Occupied(slot) => {
+                        return Err(ron::Error::custom(format_args!(
+                            "invalid entry: found duplicate key {:?}",
+                            slot.key()
+                        ))
+                        .into());
+                    }
+                    Entry::Vacant(slot) => {
+                        slot.insert(value);
+                    }
+                }
+            }
+            Ok(Interface { name, ops })
+        } else {
+            let name = self
+                .name
+                .ok_or_else(|| ron::Error::custom("missing `name` field"))?;
+            Ok(Interface {
+                name,
+                ops: self.ops,
+            })
+        }
+    }
+}
+
+/// A set of operations without an associated name, to be shared
+#[derive(Debug, Clone, Deserialize)]
+pub struct BaseInterface {
+    /// Name of interface. This will be used in generated types, and should
+    /// match Rust type name conventions.
+    name: Name,
+
+    /// Operations supported by the interface. The names of the operations
+    /// should be Rust identifiers, and will be used in generated function
+    /// names.
+    ///
+    /// This is an `IndexMap`, and the order of declaration of the operations is
+    /// significant -- it determines the operation numbering.
+    #[serde(
+        deserialize_with = "crate::serde_helpers::deserialize_reject_dup_keys"
+    )]
+    ops: IndexMap<Name, Operation>,
+}
+
 /// Definition of an IPC interface.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Interface {
     /// Name of interface. This will be used in generated types, and should
     /// match Rust type name conventions.
@@ -170,21 +277,37 @@ pub struct Interface {
     ///
     /// This is an `IndexMap`, and the order of declaration of the operations is
     /// significant -- it determines the operation numbering.
-    #[serde(
-        deserialize_with = "crate::serde_helpers::deserialize_reject_dup_keys"
-    )]
     pub ops: IndexMap<Name, Operation>,
 }
 
-impl std::str::FromStr for Interface {
+impl Interface {
+    /// Loads an `Interface` from a file on disk, resolving inheritance
+    pub fn load(
+        source: impl AsRef<std::path::Path>,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        use std::str::FromStr;
+        let text = std::fs::read_to_string(&source)?;
+        let raw = RawInterface::from_str(&text)?;
+        let iface = raw.resolve(Some(source.as_ref()))?;
+        Ok(iface)
+    }
+}
+
+impl std::str::FromStr for RawInterface {
     type Err = ron::Error;
     /// Converts the canonical text representation of an interface into an
-    /// `Interface`.
+    /// `RawInterface`.
     ///
     /// The canonical text representation is the Serde representation of
     /// `Interface` as encoded by RON.
     fn from_str(text: &str) -> Result<Self, ron::Error> {
-        let iface: Self = ron::de::from_str(text)?;
+        // IMPLICIT_SOME is required to get the typical serde behavior of
+        // deserializing a present field to `Some(field)` (and an absent field
+        // to `None`).  Otherwise, you'd have to wrap values in `Some(..)` in
+        // your RON file, which is annoying.
+        let options = ron::Options::default()
+            .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
+        let iface: Self = options.from_str(text)?;
         Ok(iface)
     }
 }
@@ -602,7 +725,7 @@ mod tests {
             )
         "#;
 
-        let err = Interface::from_str(HAS_DUPES).unwrap_err();
+        let err = RawInterface::from_str(HAS_DUPES).unwrap_err();
         assert!(err
             .to_string()
             .starts_with("invalid entry: found duplicate key"));
@@ -629,7 +752,7 @@ mod tests {
             )
         "#;
 
-        let err = Interface::from_str(HAS_DUPES).unwrap_err();
+        let err = RawInterface::from_str(HAS_DUPES).unwrap_err();
         assert!(err
             .to_string()
             .starts_with("invalid entry: found duplicate key"));
@@ -659,7 +782,7 @@ mod tests {
             )
         "#;
 
-        let err = Interface::from_str(HAS_DUPES).unwrap_err();
+        let err = RawInterface::from_str(HAS_DUPES).unwrap_err();
         assert!(err
             .to_string()
             .starts_with("invalid entry: found duplicate key"));

@@ -48,8 +48,7 @@ impl Generator {
         source: impl AsRef<std::path::Path>,
         out: impl std::io::Write,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let text = std::fs::read_to_string(source)?;
-        let iface: syntax::Interface = ron::de::from_str(&text)?;
+        let iface = syntax::Interface::load(source)?;
         self.generate_client_stub(&iface, out)
     }
 
