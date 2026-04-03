@@ -62,14 +62,18 @@ impl Generator {
         let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
         let mut stub_file = File::create(out.join(stub_name)).unwrap();
 
-        let text = std::fs::read_to_string(source)?;
-        let iface: syntax::Interface = ron::de::from_str(&text)?;
+        let iface = syntax::Interface::load(source)?;
         let mut tokens = self.generate_restricted_server_support(
             &iface,
             style,
             allowed_callers,
         )?;
 
+        // Re-serialize the fully-resolved interface
+        let text = ron::ser::to_string_pretty(
+            &iface,
+            ron::ser::PrettyConfig::default(),
+        )?;
         tokens.extend(generate_server_section(&iface, &text));
         if self.fmt {
             let formatted = common::fmt_tokens(tokens)?;
