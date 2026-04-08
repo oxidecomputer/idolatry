@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use indexmap::{map::Entry, IndexMap};
+use indexmap::{IndexMap, map::Entry};
 use serde::de::{Deserialize, Deserializer, Error, MapAccess, Visitor};
 use std::fmt;
 use std::hash::{BuildHasher, Hash};

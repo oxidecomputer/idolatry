@@ -2,8 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use super::syntax;
 use super::Generator;
+use super::syntax;
 use quote::quote;
 
 pub fn generate_op_enum(iface: &syntax::Interface) -> proc_macro2::TokenStream {
