@@ -42,6 +42,13 @@ pub struct Name {
     op_enum: OnceCell<syn::Ident>,
 }
 
+impl Default for Name {
+    fn default() -> Self {
+        use std::str::FromStr;
+        Name::from_str("_").unwrap()
+    }
+}
+
 impl std::fmt::Display for Name {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         self.ident.fmt(f)
@@ -158,12 +165,19 @@ impl std::borrow::Borrow<str> for Name {
     }
 }
 
-/// Definition of an IPC interface.
+/// Generic definition of an IPC interface.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Interface {
+#[serde(rename = "Interface")]
+pub struct Interface_<N = Name, T = Ty>
+where
+    N: Eq + std::hash::Hash + std::fmt::Debug + Default,
+    T: std::str::FromStr + Default + for<'a> Deserialize<'a>,
+    <T as std::str::FromStr>::Err: std::fmt::Display,
+{
     /// Name of interface. This will be used in generated types, and should
     /// match Rust type name conventions.
-    pub name: Name,
+    pub name: N,
+
     /// Operations supported by the interface. The names of the operations
     /// should be Rust identifiers, and will be used in generated function
     /// names.
@@ -173,10 +187,19 @@ pub struct Interface {
     #[serde(
         deserialize_with = "crate::serde_helpers::deserialize_reject_dup_keys"
     )]
-    pub ops: IndexMap<Name, Operation>,
+    pub ops: IndexMap<N, Operation<N, T>>,
 }
 
-impl std::str::FromStr for Interface {
+impl<N, T> std::str::FromStr for Interface_<N, T>
+where
+    N: Eq
+        + std::hash::Hash
+        + std::fmt::Debug
+        + Default
+        + for<'a> Deserialize<'a>,
+    T: std::str::FromStr + Default + for<'a> Deserialize<'a>,
+    <T as std::str::FromStr>::Err: std::fmt::Display,
+{
     type Err = ron::Error;
     /// Converts the canonical text representation of an interface into an
     /// `Interface`.
@@ -189,13 +212,38 @@ impl std::str::FromStr for Interface {
     }
 }
 
+/// `syn`-flavored Definition of an IPC interface.
+pub type Interface = Interface_<Name, Ty>;
+
+/// Module containing sendable types (which use `String` as names and types)
+pub mod send {
+    use super::Interface_;
+
+    pub type Interface = Interface_<String, String>;
+    pub type Operation = super::Operation<String, String>;
+    pub type AttributedTy = super::AttributedTy<String, String>;
+    pub type RecvStrategy = super::RecvStrategy<String, String>;
+    pub type Reply = super::Reply<String, String>;
+
+    // Assert that the `Interface` is send + sync
+    const _: () = {
+        const fn is_send_sync<T: Send + Sync>() {}
+        is_send_sync::<Interface>()
+    };
+}
+
 /// Definition of an operation within an `Interface`.
 ///
 /// Each interface has zero or more operations; operations are assigned
 /// distinguishing numbers (discriminators) starting from 1 (for historical
 /// reasons).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Operation {
+pub struct Operation<N = Name, T = Ty>
+where
+    N: Eq + std::hash::Hash + std::fmt::Debug + Default,
+    T: std::str::FromStr + Default,
+    <T as std::str::FromStr>::Err: std::fmt::Display,
+{
     /// Arguments of the operation that are passed by-value in the kernel-copied
     /// message. If omitted, zero arguments are assumed.
     ///
@@ -206,7 +254,7 @@ pub struct Operation {
         default,
         deserialize_with = "crate::serde_helpers::deserialize_reject_dup_keys"
     )]
-    pub args: IndexMap<Name, AttributedTy>,
+    pub args: IndexMap<N, AttributedTy<N, T>>,
     /// Arguments of the operation that are converted into leases. If omitted,
     /// zero leases are assumed.
     ///
@@ -216,9 +264,9 @@ pub struct Operation {
         default,
         deserialize_with = "crate::serde_helpers::deserialize_reject_dup_keys"
     )]
-    pub leases: IndexMap<Name, Lease>,
+    pub leases: IndexMap<N, Lease<T>>,
     /// Expected type of the response.
-    pub reply: Reply,
+    pub reply: Reply<N, T>,
 
     /// When `true`, signals that clients should automatically retry this
     /// operation if the server crashes. When `false`, the dead-codes produced
@@ -270,10 +318,10 @@ impl Encoding {
 
 /// Description of a lease expected by an operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Lease {
+pub struct Lease<T> {
     /// Type being leased.
     #[serde(rename = "type")]
-    pub ty: Ty,
+    pub ty: T,
     /// The server will be able to read from this lease. The type being leased
     /// must implement `idol_runtime::zerocopy::AsBytes`.
     #[serde(default)]
@@ -300,22 +348,27 @@ pub struct Lease {
 /// Potential packings of reply types into the Hubris IPC reply format.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Reply {
+pub enum Reply<N, T>
+where
+    T: Default + std::str::FromStr,
+    <T as std::str::FromStr>::Err: std::fmt::Display,
+    N: Default,
+{
     /// The operation can't fail, or can only fail through reply-fault, and
     /// always returns this type:
-    Simple(AttributedTy),
+    Simple(AttributedTy<N, T>),
     /// The operation may fail with an error type. This method assumes that
     /// success is indicated by rc=0, and all other values are errors.
     Result {
         /// On success (rc=0), the reply buffer will be interpreted as this
         /// type.
-        ok: AttributedTy,
+        ok: AttributedTy<N, T>,
         /// On failure (rc != 0), the given strategy will kick in.
-        err: Error,
+        err: Error<T>,
     },
 }
 
-impl quote::ToTokens for Reply {
+impl quote::ToTokens for Reply<Name, Ty> {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         match self {
             Self::Simple(AttributedTy { ty, .. }) => ty.to_tokens(tokens),
@@ -342,17 +395,17 @@ impl quote::ToTokens for Reply {
 /// If it's written as a raw type name, the attributes (other fields in this
 /// struct) are all defaulted.
 #[derive(Debug, Clone, Serialize)]
-pub struct AttributedTy {
+pub struct AttributedTy<N = Name, T = Ty> {
     /// Name of type.
     #[serde(rename = "type")]
-    pub ty: Ty,
+    pub ty: T,
     /// How to unpack this type when it is received from another task, either as
     /// an incoming argument, or as a reply.
     #[serde(default)]
-    pub recv: RecvStrategy,
+    pub recv: RecvStrategy<N, T>,
 }
 
-impl AttributedTy {
+impl AttributedTy<Name, Ty> {
     /// Returns the Rust type that should be used to represent this in the
     /// internal args/reply structs.
     pub fn repr_ty(&self) -> syn::Type {
@@ -370,10 +423,18 @@ impl AttributedTy {
 
 /// Visitor for the `Deserialize` impl of `AttributedTy`.
 #[derive(Default)]
-struct AttributedTyVisitor;
+struct AttributedTyVisitor<N, T>(
+    std::marker::PhantomData<N>,
+    std::marker::PhantomData<T>,
+);
 
-impl<'de> serde::de::Visitor<'de> for AttributedTyVisitor {
-    type Value = AttributedTy;
+impl<'de, N, T> serde::de::Visitor<'de> for AttributedTyVisitor<N, T>
+where
+    T: Deserialize<'de> + std::str::FromStr,
+    <T as std::str::FromStr>::Err: std::fmt::Display,
+    N: Deserialize<'de> + Default,
+{
+    type Value = AttributedTy<N, T>;
 
     fn expecting(
         &self,
@@ -411,7 +472,7 @@ impl<'de> serde::de::Visitor<'de> for AttributedTyVisitor {
                 }
             }
         }
-        let ty: Ty =
+        let ty: T =
             ty.ok_or_else(|| serde::de::Error::missing_field("type"))?;
         let recv = recv.unwrap_or_default();
         Ok(AttributedTy { ty, recv })
@@ -421,7 +482,7 @@ impl<'de> serde::de::Visitor<'de> for AttributedTyVisitor {
     where
         E: serde::de::Error,
     {
-        let ty = v.parse::<Ty>().map_err(E::custom)?;
+        let ty = v.parse::<T>().map_err(E::custom)?;
         Ok(AttributedTy {
             ty,
             recv: RecvStrategy::default(),
@@ -429,16 +490,24 @@ impl<'de> serde::de::Visitor<'de> for AttributedTyVisitor {
     }
 }
 
-impl<'de> Deserialize<'de> for AttributedTy {
+impl<'de, N, T> Deserialize<'de> for AttributedTy<N, T>
+where
+    T: Deserialize<'de> + std::str::FromStr,
+    <T as std::str::FromStr>::Err: std::fmt::Display,
+    N: Deserialize<'de> + Default,
+{
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::de::Deserializer<'de>,
     {
-        deserializer.deserialize_any(AttributedTyVisitor)
+        deserializer.deserialize_any(AttributedTyVisitor(
+            std::marker::PhantomData,
+            std::marker::PhantomData,
+        ))
     }
 }
 
-impl quote::ToTokens for AttributedTy {
+impl quote::ToTokens for AttributedTy<Name, Ty> {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         self.ty.to_tokens(tokens)
     }
@@ -454,6 +523,13 @@ impl quote::ToTokens for AttributedTy {
     serde_with::DeserializeFromStr,
 )]
 pub struct Ty(pub syn::Type);
+
+impl Default for Ty {
+    fn default() -> Self {
+        use std::str::FromStr;
+        Ty::from_str("()").unwrap()
+    }
+}
 
 impl Ty {
     /// Checks whether the type name looks like it might be unsized.
@@ -498,13 +574,13 @@ impl quote::ToTokens for Ty {
 /// Enumerates different ways that an error type might be passed through the
 /// REPLY syscall.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum Error {
+pub enum Error<T = Ty> {
     /// The error type should be created from the (non-zero) return code only.
     /// The reply message in error cases is expected to be zero-length.
     ///
     /// The error type here may or may not be required to also represent dead
     /// codes, depending on whether the operation is `idempotent`.
-    CLike(Ty),
+    CLike(T),
 
     /// A non-zero return code indicates an error, but the specific type of
     /// error is found by deserializing the message payload using the same
@@ -512,7 +588,7 @@ pub enum Error {
     ///
     /// The error type here may or may not be required to also represent dead
     /// codes, depending on whether the operation is `idempotent`.
-    Complex(Ty),
+    Complex(T),
 
     /// The client will never return an error, but the function is not
     /// idempotent and will return `Err(ServerDeath {})` if the server died
@@ -520,7 +596,7 @@ pub enum Error {
     ServerDeath,
 }
 
-impl quote::ToTokens for Error {
+impl quote::ToTokens for Error<Ty> {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         match self {
             Self::CLike(ty) | Self::Complex(ty) => ty.to_tokens(tokens),
@@ -537,14 +613,14 @@ impl quote::ToTokens for Error {
 /// Enumerates different ways that a type might be unpacked when received over
 /// an IPC interface from another task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum RecvStrategy {
+pub enum RecvStrategy<N, T> {
     /// The received bytes should be directly reinterpreted as the type using
     /// `idol_runtime::zerocopy::FromBytes`.
     FromBytes,
     /// The received bytes should be the named type, which will then be
     /// converted into the target type using `num_traits::FromPrimitive` (which
     /// is also re-exported by Hubris `userlib`).
-    FromPrimitive(Ty),
+    FromPrimitive(T),
     /// The received bytes should be the named type, which will then be
     /// converted into the target type.
     ///
@@ -552,10 +628,10 @@ pub enum RecvStrategy {
     ///
     /// If the second field is `Some(fn_name)`, it specifies conversion by
     /// `fn_name`.
-    From(Ty, #[serde(default)] Option<Name>),
+    From(T, #[serde(default)] Option<N>),
 }
 
-impl Default for RecvStrategy {
+impl<N, T> Default for RecvStrategy<N, T> {
     fn default() -> Self {
         Self::FromBytes
     }
