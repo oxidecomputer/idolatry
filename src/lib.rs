@@ -178,5 +178,7 @@ mod test {
     fn parse_example() {
         let _iface = syntax::Interface::from_str(EXAMPLE)
             .expect("example failed to parse");
+        let _iface = syntax::send::Interface::from_str(EXAMPLE)
+            .expect("example failed to parse");
     }
 }
