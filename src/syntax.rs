@@ -168,7 +168,7 @@ impl std::borrow::Borrow<str> for Name {
 /// Generic definition of an IPC interface.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename = "Interface")]
-pub struct Interface_<N = Name, T = Ty>
+pub struct GenericInterface<N = Name, T = Ty>
 where
     N: Eq + std::hash::Hash + std::fmt::Debug + Default,
     T: std::str::FromStr + Default + for<'a> Deserialize<'a>,
@@ -190,7 +190,7 @@ where
     pub ops: IndexMap<N, Operation<N, T>>,
 }
 
-impl<N, T> std::str::FromStr for Interface_<N, T>
+impl<N, T> std::str::FromStr for GenericInterface<N, T>
 where
     N: Eq
         + std::hash::Hash
@@ -213,13 +213,13 @@ where
 }
 
 /// `syn`-flavored Definition of an IPC interface.
-pub type Interface = Interface_<Name, Ty>;
+pub type Interface = GenericInterface<Name, Ty>;
 
 /// Module containing sendable types (which use `String` as names and types)
 pub mod send {
-    use super::Interface_;
+    use super::GenericInterface;
 
-    pub type Interface = Interface_<String, String>;
+    pub type Interface = GenericInterface<String, String>;
     pub type Operation = super::Operation<String, String>;
     pub type AttributedTy = super::AttributedTy<String, String>;
     pub type RecvStrategy = super::RecvStrategy<String, String>;
