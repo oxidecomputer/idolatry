@@ -12,7 +12,11 @@ use once_cell::unsync::OnceCell;
 use quote::TokenStreamExt;
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
-use std::num::NonZeroU32;
+use std::{
+    hash::{Hash, Hasher},
+    num::NonZeroU32,
+    str::FromStr,
+};
 
 /// An identifier.
 #[derive(Debug, SerializeDisplay, DeserializeFromStr)]
@@ -44,7 +48,6 @@ pub struct Name {
 
 impl Default for Name {
     fn default() -> Self {
-        use std::str::FromStr;
         Name::from_str("_").unwrap()
     }
 }
@@ -55,7 +58,7 @@ impl std::fmt::Display for Name {
     }
 }
 
-impl std::str::FromStr for Name {
+impl FromStr for Name {
     type Err = syn::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let ident = syn::parse_str(s)?;
@@ -108,8 +111,8 @@ impl PartialOrd for Name {
     }
 }
 
-impl std::hash::Hash for Name {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+impl Hash for Name {
+    fn hash<H: Hasher>(&self, state: &mut H) {
         self.ident.hash(state);
     }
 }
@@ -170,9 +173,9 @@ impl std::borrow::Borrow<str> for Name {
 #[serde(rename = "Interface")]
 pub struct GenericInterface<N = Name, T = Ty>
 where
-    N: Eq + std::hash::Hash + std::fmt::Debug + Default,
-    T: std::str::FromStr + Default + for<'a> Deserialize<'a>,
-    <T as std::str::FromStr>::Err: std::fmt::Display,
+    N: Eq + Hash + std::fmt::Debug + Default,
+    T: FromStr + Default + for<'a> Deserialize<'a>,
+    <T as FromStr>::Err: std::fmt::Display,
 {
     /// Name of interface. This will be used in generated types, and should
     /// match Rust type name conventions.
@@ -190,15 +193,11 @@ where
     pub ops: IndexMap<N, Operation<N, T>>,
 }
 
-impl<N, T> std::str::FromStr for GenericInterface<N, T>
+impl<N, T> FromStr for GenericInterface<N, T>
 where
-    N: Eq
-        + std::hash::Hash
-        + std::fmt::Debug
-        + Default
-        + for<'a> Deserialize<'a>,
-    T: std::str::FromStr + Default + for<'a> Deserialize<'a>,
-    <T as std::str::FromStr>::Err: std::fmt::Display,
+    N: Eq + Hash + std::fmt::Debug + Default + for<'a> Deserialize<'a>,
+    T: FromStr + Default + for<'a> Deserialize<'a>,
+    <T as FromStr>::Err: std::fmt::Display,
 {
     type Err = ron::Error;
     /// Converts the canonical text representation of an interface into an
@@ -240,9 +239,9 @@ pub mod send {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Operation<N = Name, T = Ty>
 where
-    N: Eq + std::hash::Hash + std::fmt::Debug + Default,
-    T: std::str::FromStr + Default,
-    <T as std::str::FromStr>::Err: std::fmt::Display,
+    N: Eq + Hash + std::fmt::Debug + Default,
+    T: FromStr + Default,
+    <T as FromStr>::Err: std::fmt::Display,
 {
     /// Arguments of the operation that are passed by-value in the kernel-copied
     /// message. If omitted, zero arguments are assumed.
@@ -350,8 +349,8 @@ pub struct Lease<T> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Reply<N, T>
 where
-    T: Default + std::str::FromStr,
-    <T as std::str::FromStr>::Err: std::fmt::Display,
+    T: Default + FromStr,
+    <T as FromStr>::Err: std::fmt::Display,
     N: Default,
 {
     /// The operation can't fail, or can only fail through reply-fault, and
@@ -430,8 +429,8 @@ struct AttributedTyVisitor<N, T>(
 
 impl<'de, N, T> serde::de::Visitor<'de> for AttributedTyVisitor<N, T>
 where
-    T: Deserialize<'de> + std::str::FromStr,
-    <T as std::str::FromStr>::Err: std::fmt::Display,
+    T: Deserialize<'de> + FromStr,
+    <T as FromStr>::Err: std::fmt::Display,
     N: Deserialize<'de> + Default,
 {
     type Value = AttributedTy<N, T>;
@@ -492,8 +491,8 @@ where
 
 impl<'de, N, T> Deserialize<'de> for AttributedTy<N, T>
 where
-    T: Deserialize<'de> + std::str::FromStr,
-    <T as std::str::FromStr>::Err: std::fmt::Display,
+    T: Deserialize<'de> + FromStr,
+    <T as FromStr>::Err: std::fmt::Display,
     N: Deserialize<'de> + Default,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -526,7 +525,6 @@ pub struct Ty(pub syn::Type);
 
 impl Default for Ty {
     fn default() -> Self {
-        use std::str::FromStr;
         Ty::from_str("()").unwrap()
     }
 }
@@ -558,7 +556,7 @@ impl std::fmt::Display for Ty {
     }
 }
 
-impl std::str::FromStr for Ty {
+impl FromStr for Ty {
     type Err = syn::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         syn::parse_str(s).map(Self)
@@ -640,7 +638,6 @@ impl<N, T> Default for RecvStrategy<N, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
 
     #[test]
     fn reject_duplicate_ops() {
