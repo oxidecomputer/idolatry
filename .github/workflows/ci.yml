@@ -1,0 +1,92 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  # disable incremental compilation.
+  #
+  # incremental compilation is useful as part of an edit-build-test-edit cycle,
+  # as it lets the compiler avoid recompiling code that hasn't changed. however,
+  # on CI, we're not making small edits; we're almost always building the entire
+  # project from scratch. thus, incremental compilation on CI actually
+  # introduces *additional* overhead to support making future builds
+  # faster...but no future builds will ever occur in any given CI environment.
+  #
+  # see https://matklad.github.io/2021/09/04/fast-rust-builds.html#ci-workflow
+  # for details.
+  CARGO_INCREMENTAL: 0
+  # allow more retries for network requests in cargo (downloading crates) and
+  # rustup (installing toolchains). this should help to reduce flaky CI failures
+  # from transient network timeouts or other issues.
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+
+jobs:
+  check-idol:
+    name: Check idol codegen
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+        - "stable"
+        # the current pinned Rust toolchain in the Hubris repo:
+        # https://github.com/oxidecomputer/hubris/blob/master/rust-toolchain.toml
+        #
+        # when updating Hubris' Rust toolchain, make sure to update this, too!
+        # TODO(eliza): it would be nice to determine this automatically...
+        - "nightly-2022-11-01"
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: ${{ matrix.rust }}
+        override: true
+    - uses: Swatinem/rust-cache@v1
+    - run: cargo check -p idol
+
+  check-runtime:
+    name: Check idol-runtime
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+        # the current pinned Rust toolchain in the Hubris repo:
+        # https://github.com/oxidecomputer/hubris/blob/master/rust-toolchain.toml
+        #
+        # when updating Hubris' Rust toolchain, make sure to update this, too!
+        # TODO(eliza): it would be nice to determine this automatically...
+        - "nightly-2022-11-01"
+        target:
+        - "thumbv6m-none-eabi"
+        - "thumbv7em-none-eabihf"
+        - "thumbv8m.main-none-eabihf"
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: ${{ matrix.rust }}
+        target: ${{ matrix.target }}
+        override: true
+    - uses: Swatinem/rust-cache@v1
+    - run: cargo check -p idol-runtime --target ${{ matrix.target }}
+
+  rustfmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+        - "stable"
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: ${{ matrix.rust }}
+        override: true
+    - uses: Swatinem/rust-cache@v1
+    - run: cargo fmt --check
