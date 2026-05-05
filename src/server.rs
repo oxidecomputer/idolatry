@@ -576,7 +576,7 @@ impl Generator {
                         let serializer = op.encoding.crate_name();
                         quote! {
                             let mut reply_buf = [0u8; #reply_size];
-                            let n_reply = #serializer::serialize(&mut reply_buf, &val).map_err(|_| ()).unwrap_lite();
+                            let n_reply = #serializer::serialize(&mut reply_buf, &val).unwrap_lite();
                             userlib::sys_reply(rm.sender, 0, &reply_buf[..n_reply]);
                         }
                     }
@@ -625,7 +625,7 @@ impl Generator {
                                         }
                                         idol_runtime::RequestError::Runtime(e) => {
                                             let mut reply_buf = [0u8; <#ty as hubpack::SerializedSize>::MAX_SIZE];
-                                            let n_reply = hubpack::serialize(&mut reply_buf, &e).map_err(|_| ()).unwrap_lite();
+                                            let n_reply = hubpack::serialize(&mut reply_buf, &e).unwrap_lite();
                                             userlib::sys_reply(rm.sender, 1, &reply_buf[..n_reply]);
                                         }
                                     }
