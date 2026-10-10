@@ -917,7 +917,14 @@ fn generate_server_section(
         // To allow it to be pulled out by debuggers, we drop the entirety of the
         // interface definition in a dedicated (unloaded) section
         #[used]
-        #[unsafe(link_section = ".idolatry")]
+        #[cfg_attr(
+            not(target_os = "macos"),
+            unsafe(link_section = ".idolatry")
+        )]
+        #[cfg_attr(
+            target_os = "macos",
+            unsafe(link_section = "__const,idolatry")
+        )]
         static #name: [u8; #len] = *#byte_str;
     }
 }
